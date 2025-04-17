@@ -266,103 +266,161 @@ class ModelController {
   }
 
   /**
-   * Get classified models from the external gRPC service.
+   * Internal logic to fetch classified models using the classification service.
+   * Does not handle HTTP reply directly. Throws errors on failure.
+   * @returns {Promise<Object>} Classified models data
+   * @private
+   */
+  async _fetchClassifiedModels() {
+    // Ensure service is enabled and initialized
+    if (!this.useClassificationService || !this.modelClassificationService) {
+      logger.warn("Attempted to fetch classified models when service is disabled/unavailable.");
+      // Throw an error that can be caught by the caller
+      throw new Error("Model classification service is not enabled.");
+    }
+
+    // Use cached results if available (applyCaching handles the fetch logic)
+    const cacheKey = "classifiedModels";
+    const classifiedData = await applyCaching(cacheKey, async () => {
+        // Fetch fresh provider info
+        const providersInfo = await providerFactory.getProvidersInfo();
+        
+        // Call the classification service via the circuit breaker
+        logger.debug("Calling classification service via circuit breaker...");
+        // Note: .fire() will throw BreakerOpenError if breaker is open
+        const classifiedModels = await this.classifyBreaker.fire(providersInfo); 
+        logger.debug("Classification service call successful.");
+        
+        // Assuming the service returns a usable format
+        return classifiedModels; 
+    });
+    
+    return classifiedData; // Return fetched or cached data
+  }
+
+
+  /**
+   * GET /models/classified - Route handler for getting classified models.
    * @param {FastifyRequest} request - Fastify request object.
    * @param {FastifyReply} reply - Fastify reply object.
    */
   async getClassifiedModels(request, reply) {
-    // Ensure service is enabled and initialized
-    if (!this.useClassificationService || !this.modelClassificationService) {
-      logger.warn("Attempted to call getClassifiedModels when service is disabled/unavailable.");
-      // Return fallback or error. For now, return 501 Not Implemented
-      return reply.status(501).send({ error: "Model classification service is not enabled." });
-    }
-    
     try {
       metrics.incrementRequestCount();
       
-      // Use cached results if available
-      const cacheKey = "classifiedModels";
-      const cachedData = await applyCaching(cacheKey, async () => {
-          // Fetch fresh provider info (or use cached if appropriate elsewhere)
-          const providersInfo = await providerFactory.getProvidersInfo();
-          
-          // Call the classification service via the circuit breaker
-          logger.debug("Calling classification service via circuit breaker...");
-          const classifiedModels = await this.classifyBreaker.fire(providersInfo);
-          logger.debug("Classification service call successful.");
-          
-          // Convert proto response to standard JS objects if necessary (assuming service returns proto)
-          // This depends on the service implementation. If it already converts, this is not needed.
-          // Example: return convertProtoResponse(classifiedModels);
-          return classifiedModels; // Assuming the service returns a usable format
-      });
+      // Call the internal fetch logic
+      const classifiedData = await this._fetchClassifiedModels();
       
-      return reply.send(cachedData); // Send cached or freshly fetched data
+      // Send successful response
+      return reply.send(classifiedData); 
       
     } catch (error) {
-      logger.error(`Error getting classified models: ${error.message}`, { 
+      // Log error with context
+      logger.error(`Error in getClassifiedModels handler: ${error.message}`, { 
           stack: error.stack, 
+          // Check breaker state if the breaker exists
           breaker_state: this.classifyBreaker?.state 
       });
       
-      // Check if it's a circuit breaker error
-      if (error.name === 'BreakerOpenError') {
-          return reply.status(503).send({ error: "Model classification service is temporarily unavailable. Please try again later." });
+      // Determine status code based on error type
+      let statusCode = 500;
+      let errorMessage = "Failed to get classified models.";
+      if (error.message === "Model classification service is not enabled.") {
+          statusCode = 501; // Not Implemented
+          errorMessage = error.message;
+      } else if (error.name === 'BreakerOpenError') {
+          statusCode = 503; // Service Unavailable
+          errorMessage = "Model classification service is temporarily unavailable. Please try again later.";
       } else {
-        // Other errors (timeout from gRPC, internal service error, etc.)
-        return reply.status(502).send({ error: "Failed to get classified models from the upstream service.", message: error.message });
+          statusCode = 502; // Bad Gateway (upstream error)
+          errorMessage = "Failed to get classified models from the upstream service.";
       }
+        
+      // Send error response using reply
+      return reply.status(statusCode).send({ error: errorMessage, message: error.message });
     }
   }
   
   /**
-   * Get classified models based on specific criteria.
+   * Internal logic to fetch classified models based on criteria.
+   * Does not handle HTTP reply directly. Throws errors on failure.
+   * @param {Object} criteria - The classification criteria.
+   * @returns {Promise<Object>} Classified models data.
+   * @private
+   */
+  async _fetchClassifiedModelsWithCriteria(criteria) {
+    // Ensure service is enabled and initialized
+    if (!this.useClassificationService || !this.modelClassificationService) {
+      logger.warn("Attempted to fetch classified models with criteria when service is disabled/unavailable.");
+      throw new Error("Model classification service is not enabled.");
+    }
+
+    // Basic validation of criteria (can be expanded)
+    if (!criteria || typeof criteria !== 'object' || Object.keys(criteria).length === 0) {
+      // Throw a specific validation error
+      const validationError = new Error("Missing or invalid classification criteria.");
+      validationError.name = 'ValidationError'; // For potential mapping in error handler
+      throw validationError; 
+    }
+
+    // Use caching based on criteria
+    const cacheKey = `classifiedModelsCriteria:${JSON.stringify(criteria)}`;
+    const classifiedData = await applyCaching(cacheKey, async () => {
+        // Call the classification service via the circuit breaker
+        logger.debug("Calling classification service (criteria) via circuit breaker...");
+        const classifiedModels = await this.criteriaBreaker.fire(criteria);
+        logger.debug("Classification service call (criteria) successful.");
+        // Assuming the service returns a usable format
+        return classifiedModels; 
+    });
+
+    return classifiedData;
+  }
+
+
+  /**
+   * POST /models/classified/criteria - Route handler for getting classified models by criteria.
    * @param {FastifyRequest} request - Fastify request object.
    * @param {FastifyReply} reply - Fastify reply object.
    */
   async getClassifiedModelsWithCriteria(request, reply) {
-    // Ensure service is enabled and initialized
-    if (!this.useClassificationService || !this.modelClassificationService) {
-      logger.warn("Attempted to call getClassifiedModelsWithCriteria when service is disabled/unavailable.");
-      return reply.status(501).send({ error: "Model classification service is not enabled." });
-    }
-
     try {
       metrics.incrementRequestCount();
       const criteria = request.body; // Assuming criteria are in the request body
 
-      if (!criteria || typeof criteria !== 'object' || Object.keys(criteria).length === 0) {
-        return reply.status(400).send({ error: "Missing or invalid classification criteria in request body." });
-      }
+      // Call the internal fetch logic with criteria
+      const classifiedData = await this._fetchClassifiedModelsWithCriteria(criteria);
 
-      // Use caching based on criteria
-      const cacheKey = `classifiedModelsCriteria:${JSON.stringify(criteria)}`;
-      const cachedData = await applyCaching(cacheKey, async () => {
-          // Call the classification service via the circuit breaker
-          logger.debug("Calling classification service (criteria) via circuit breaker...");
-          const classifiedModels = await this.criteriaBreaker.fire(criteria);
-          logger.debug("Classification service call (criteria) successful.");
-          // Assuming the service returns a usable format
-          return classifiedModels; 
-      });
-
-      return reply.send(cachedData);
+      // Send successful response
+      return reply.send(classifiedData);
 
     } catch (error) {
-      logger.error(`Error getting classified models with criteria: ${error.message}`, { 
+      // Log error with context
+      logger.error(`Error in getClassifiedModelsWithCriteria handler: ${error.message}`, { 
           stack: error.stack, 
           criteria: request.body, 
           breaker_state: this.criteriaBreaker?.state 
       });
       
-      // Check if it's a circuit breaker error
-      if (error.name === 'BreakerOpenError') {
-          return reply.status(503).send({ error: "Model classification service is temporarily unavailable. Please try again later." });
+      // Determine status code based on error type
+      let statusCode = 500;
+      let errorMessage = "Failed to get classified models by criteria.";
+      if (error.message === "Model classification service is not enabled.") {
+          statusCode = 501; // Not Implemented
+          errorMessage = error.message;
+      } else if (error.name === 'ValidationError') { // Handle validation error from internal method
+          statusCode = 400; // Bad Request
+          errorMessage = error.message; 
+      } else if (error.name === 'BreakerOpenError') {
+          statusCode = 503; // Service Unavailable
+          errorMessage = "Model classification service is temporarily unavailable. Please try again later.";
       } else {
-        // Other errors
-        return reply.status(502).send({ error: "Failed to get classified models by criteria from the upstream service.", message: error.message });
+          statusCode = 502; // Bad Gateway (upstream error)
+          errorMessage = "Failed to get classified models by criteria from the upstream service.";
       }
+
+      // Send error response using reply
+      return reply.status(statusCode).send({ error: errorMessage, message: error.message });
     }
   }
 }
