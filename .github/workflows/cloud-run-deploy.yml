@@ -57,43 +57,16 @@ jobs:
         gcloud secrets versions add firebase-credentials --data-file=authkey.json --project ${{ env.PROJECT_ID }}
       continue-on-error: true # Don't fail if secret exists
 
-    # Create temporary YAML env file from GitHub secret by converting .env format to YAML
-    - name: Create env vars YAML file
+    # Validate config.yml exists
+    - name: Validate config file
       run: |
-        # Create a temporary .env file
-        echo "${{ secrets.ENV_VARS }}" > .env.tmp
-        
-        # Convert .env to YAML format (required for --env-vars-file)
-        python -c "
-import re
-import sys
-
-# Read the .env file
-with open('.env.tmp', 'r') as f:
-    env_content = f.read()
-
-# Parse and convert to YAML format
-yaml_lines = []
-for line in env_content.splitlines():
-    # Skip empty lines or comments
-    if not line.strip() or line.strip().startswith('#'):
-        continue
-    
-    # Split by first equals sign
-    parts = line.split('=', 1)
-    if len(parts) == 2:
-        key = parts[0].strip()
-        value = parts[1].strip()
-        # Remove quotes if present
-        if (value.startswith('\"') and value.endswith('\"')) or (value.startswith('\\'') and value.endswith('\\'')):
-            value = value[1:-1]
-        yaml_lines.append(f'{key}: {value}')
-
-# Write YAML output
-with open('.env.yaml', 'w') as f:
-    f.write('\n'.join(yaml_lines))
-"
-
+        # Make sure config.yml exists
+        if [ ! -f "config.yml" ]; then
+          echo "ERROR: config.yml not found!"
+          exit 1
+        fi
+        echo "Config file found and will be used for deployment."
+      
     - name: Build and Push Docker image using Cloud Build
       run: |
         gcloud builds submit . \
@@ -107,7 +80,7 @@ with open('.env.yaml', 'w') as f:
           --region ${{ env.REGION }} \
           --platform managed \
           --allow-unauthenticated \
-          --env-vars-file .env.yaml \
-          --set-env-vars="FIREBASE_CONFIG='${{ secrets.Gcloud }}',NODE_ENV=production" \
+          --env-vars-file config.yml \
+          --set-env-vars="FIREBASE_CONFIG='${{ secrets.Gcloud }}',OPENAI_API_KEY='${{ secrets.OPENAI_API_KEY }}',GOOGLE_API_KEY='${{ secrets.GOOGLE_API_KEY }}',ANTHROPIC_API_KEY='${{ secrets.ANTHROPIC_API_KEY }}',OPENROUTER_API_KEY='${{ secrets.OPENROUTER_API_KEY }}'" \
           --project ${{ env.PROJECT_ID }}
         # Remove --allow-unauthenticated for production! 
