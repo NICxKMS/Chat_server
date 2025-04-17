@@ -56,18 +56,19 @@ jobs:
 
           python <<EOF
 import re, sys
-with open('.env.tmp') as f:
+
+with open('.env.tmp', 'r') as f:
     lines = f.read().splitlines()
 
 yaml = []
 for l in lines:
     if not l.strip() or l.strip().startswith('#'):
         continue
-    k,v = l.split('=',1)
+    k, v = l.split('=', 1)
     v = v.strip().strip('\'"')
     yaml.append(f"{k.strip()}: {v}")
 
-with open('.env.yaml','w') as out:
+with open('.env.yaml', 'w') as out:
     out.write('\n'.join(yaml))
 EOF
 
