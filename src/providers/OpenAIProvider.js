@@ -54,7 +54,7 @@ class OpenAIProvider extends BaseProvider {
     this.hasModels = this.cachedModels.length > 0;
     
     // Log initialization status
-    console.log(`OpenAIProvider initialized with ${this.cachedModels.length} initial models from config`);
+    logger.info(`OpenAIProvider initialized with ${this.cachedModels.length} initial models from config`);
   }
 
   /**
@@ -66,11 +66,10 @@ class OpenAIProvider extends BaseProvider {
     try {
       // Return cache if we have data from API and not forcing refresh
       if (this.modelsLoadedFromAPI && this.cachedModels.length > 0 && !options.forceRefresh) {
-        console.log(`Using ${this.cachedModels.length} cached OpenAI models from previous API call`);
         return this.cachedModels;
       }
       
-      console.log("Fetching models from OpenAI API...");
+      logger.info("Fetching models from OpenAI API...");
       
       // Create fallback models in case API call fails
       const fallbackModels = [
@@ -88,11 +87,11 @@ class OpenAIProvider extends BaseProvider {
         const response = await this.client.models.list();
         
         if (!response || !response.data || !Array.isArray(response.data)) {
-          console.error("Invalid response format from OpenAI API:", response);
+          logger.error("Invalid response format from OpenAI API", { response });
           throw new Error("Invalid response format from OpenAI models API");
         }
         
-        console.log(`Received ${response.data.length} models from OpenAI API`);
+        logger.info(`Received ${response.data.length} models from OpenAI API`);
         
         let filteredModels = response.data
           .filter(model => {
@@ -121,33 +120,33 @@ class OpenAIProvider extends BaseProvider {
         this.modelsLoadedFromAPI = true;
         this.hasModels = true;
         
-        console.log(`Successfully loaded ${this.cachedModels.length} models from OpenAI API`);
+        logger.info(`Successfully loaded ${this.cachedModels.length} models from OpenAI API`);
         
         return filteredModels;
       } catch (error) {
-        console.error("Error fetching OpenAI models from API:", error.message);
+        logger.error("Error fetching OpenAI models from API", { error: error.message });
         
         // If we have previously loaded models from the API, return those
         if (this.modelsLoadedFromAPI && this.cachedModels.length > 0) {
-          console.log(`Using ${this.cachedModels.length} previously cached models from API due to error`);
+          logger.warn(`Using ${this.cachedModels.length} previously cached models from API due to error`);
           return this.cachedModels;
         }
         
         // If we have config models, return those
         if (this.hasModels && this.cachedModels.length > 0) {
-          console.log(`Using ${this.cachedModels.length} models from config due to API error`);
+          logger.warn(`Using ${this.cachedModels.length} models from config due to API error`);
           return this.cachedModels;
         }
         
         // Otherwise use fallback models
-        console.log(`Using ${fallbackModels.length} hardcoded fallback models due to API error`);
+        logger.warn(`Using ${fallbackModels.length} hardcoded fallback models due to API error`);
         const models = this._createModelObjects(fallbackModels);
         this.cachedModels = models;
         this.hasModels = true;
         return models;
       }
     } catch (error) {
-      console.error("Error in getModels:", error.message);
+      logger.error("Error in getModels", { error: error.message });
       
       // Return any models we have or use fallback models
       if (this.hasModels && this.cachedModels.length > 0) {
@@ -257,7 +256,7 @@ class OpenAIProvider extends BaseProvider {
       
       return response;
     } catch (error) {
-      console.error(`OpenAI API error: ${error.message}`);
+      // logger.error(`OpenAI API error: ${error.message}`); // REMOVED this line
       
       // Record failed API call
       metrics.incrementProviderRequestCount(

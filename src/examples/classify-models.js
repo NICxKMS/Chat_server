@@ -3,6 +3,7 @@
  * Demonstrates how to use the protoUtils to communicate with the Go gRPC server
  */
 import protoUtils from "../utils/protoUtils.js";
+import logger from "../utils/logger.js";
 
 // Sample models data
 const sampleModels = [
@@ -39,19 +40,15 @@ async function main() {
   try {
     // Create client (connect to localhost:8080 by default)
     const client = protoUtils.createModelClassificationClient();
-    console.log("Connected to Model Classification Service");
 
     // Classify models example
-    console.log("\n--- Classifying Models Example ---");
     await classifyModelsExample(client);
 
     // Classify with criteria example
-    console.log("\n--- Classifying With Criteria Example ---");
     await classifyWithCriteriaExample(client);
 
   } catch (error) {
-    console.error("Error:", error.message);
-    console.error("Details:", error);
+    logger.error("Main function error", { message: error.message, details: error });
   }
 }
 
@@ -72,12 +69,11 @@ async function classifyModelsExample(client) {
     );
 
     // Display results
-    console.log(`Received ${response.classified_groups.length} classification groups:`);
     response.classified_groups.forEach(group => {
-      console.log(`- ${group.property_name}: ${group.property_value} (${group.models.length} models)`);
+      // REMOVED console.log(...)
     });
   } catch (error) {
-    console.error("Classification failed:", error);
+    logger.error("Classification example failed", { error });
   }
 }
 
@@ -98,20 +94,18 @@ async function classifyWithCriteriaExample(client) {
     );
 
     // Display results
-    console.log(`Received ${response.classified_groups.length} classification groups:`);
     response.classified_groups.forEach(group => {
-      console.log(`- ${group.property_name}: ${group.property_value} (${group.models.length} models)`);
+      // REMOVED console.log(...)
     });
 
     // Show available properties
-    console.log("\nAvailable Classification Properties:");
     response.available_properties.forEach(prop => {
-      console.log(`- ${prop.name} (${prop.display_name}): ${prop.description}`);
+      // REMOVED console.log(...)
     });
   } catch (error) {
-    console.error("Classification with criteria failed:", error);
+    logger.error("Classification with criteria example failed", { error });
   }
 }
 
 // Run the example
-main().catch(console.error); 
+main().catch(error => logger.error("Unhandled error in main execution", { error })); 

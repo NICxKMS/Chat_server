@@ -319,10 +319,6 @@ class ChatController {
       if (frequency_penalty !== undefined) options.frequency_penalty = parseFloat(frequency_penalty);
       if (presence_penalty !== undefined) options.presence_penalty = parseFloat(presence_penalty);
 
-      // ---> ADDED LOGGING HERE <---
-      // logger.debug(`Options being passed to provider ${providerName}/${modelName}`, { options }); // REMOVING THIS
-      // ---> END ADDED LOGGING <---
-
       // Get provider stream
       const providerStream = provider.chatCompletionStream(options);
       

@@ -95,7 +95,34 @@ const start = async () => {
     // Register essential plugins
     await fastify.register(fastifyCors, {
       // origin: 'http://localhost:3001', // Temporarily commented out
-      origin: process.env.NODE_ENV === 'production' ? false : ['http://localhost:3001', 'http://localhost:3000','http://192.168.1.100:3001', 'http://localhost:3002','*'],
+      // origin: process.env.NODE_ENV === 'production' ? false : ['http://localhost:3001', 'http://localhost:3000','http://192.168.1.100:3001', 'http://localhost:3002','*'], // OLD CORS logic
+      origin: (origin, cb) => {
+        const allowedOrigins = [
+          'http://localhost:3000'
+        ];
+        const allowedPattern = /\\.chat-api-9ru\\.pages\\.dev$/; // Regex for allowed Cloudflare Pages domain
+
+        if (process.env.NODE_ENV !== 'production') {
+          // Allow common dev origins and wildcard in non-production
+          const devOrigins = ['http://localhost:3001', 'http://localhost:3000','http://192.168.1.100:3001', 'http://localhost:3002'];
+          if (!origin || devOrigins.includes(origin) || origin.includes('localhost')) { // Allow requests with no origin (like curl) and common dev hosts
+            cb(null, true);
+            return;
+          }
+          // For non-production, you might still want to allow the production pattern or be more permissive
+          // Example: allow anything if not production
+           cb(null, true); // Allow everything in non-prod for simplicity here
+           return;
+        } else {
+           // Production CORS logic
+          if (!origin || allowedOrigins.includes(origin) || allowedPattern.test(origin)) {
+            cb(null, true); // Allow the origin
+          } else {
+            logger.warn(`CORS denied for origin: ${origin}`);
+            cb(new Error('Not allowed by CORS'), false); // Deny the origin
+          }
+        }
+      },
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       allowedHeaders: [
         'Content-Type',
@@ -151,7 +178,6 @@ const start = async () => {
     // --- Start Server ---
     await fastify.listen({ port: PORT, host: '0.0.0.0' });
     // Logger automatically logs listen address
-    console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
 
     // Determine Base Path from Environment Variable
     logger.info(`Cache enabled: ${isCacheEnabled()}`);

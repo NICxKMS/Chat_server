@@ -12,9 +12,16 @@ const logFormat = winston.format.printf(({ level, message, timestamp, ...meta })
   }`;
 });
 
+// Determine log level based on environment
+const logLevel = process.env.NODE_ENV === 'production' 
+  ? 'warn' 
+  : process.env.NODE_ENV === 'development' 
+    ? 'debug' 
+    : 'info';
+
 // Create the logger
 const logger = winston.createLogger({
-  level: config.logLevel || "info",
+  level: logLevel,
   format: winston.format.combine(
     winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
     winston.format.errors({ stack: true }),
