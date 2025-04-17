@@ -2,7 +2,6 @@
 # This file contains all non-sensitive environment variables for Cloud Run deployment
 
 # Server Configuration
-PORT: '8080'
 NODE_ENV: production
 CACHE_ENABLED: 'true'
 USE_CLASSIFICATION_SERVICE: 'true'
