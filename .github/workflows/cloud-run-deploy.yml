@@ -53,24 +53,8 @@ jobs:
       - name: Create env vars YAML file
         run: |
           echo "${{ secrets.ENV_VARS }}" > .env.tmp
-
-          python <<EOF
-import re, sys
-
-with open('.env.tmp', 'r') as f:
-    lines = f.read().splitlines()
-
-yaml = []
-for l in lines:
-    if not l.strip() or l.strip().startswith('#'):
-        continue
-    k, v = l.split('=', 1)
-    v = v.strip().strip('\'"')
-    yaml.append(f"{k.strip()}: {v}")
-
-with open('.env.yaml', 'w') as out:
-    out.write('\n'.join(yaml))
-EOF
+          # drop blank lines & comments, then convert KEY=VAL → KEY: VAL
+          sed -E '/^\s*$/d; /^\s*#/d; s/^([^=]+)=(.*)$/\1: \2/' .env.tmp > .env.yaml
 
       - name: Build & Push Docker image
         run: |
