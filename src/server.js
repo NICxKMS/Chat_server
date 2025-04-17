@@ -26,7 +26,7 @@ dotenv.config({ override: false }); // Load .env but don't override existing env
 // Create Fastify application
 // const app = express(); // Removed
 const fastify = Fastify({ logger: true }); // Added (with logger)
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 // --- Initialize Firebase Admin SDK --- 
 try {
