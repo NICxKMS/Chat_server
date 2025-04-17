@@ -49,6 +49,14 @@ jobs:
           --description="Docker repository for ${{ env.SERVICE_NAME }}" || echo "Repository already exists"
       continue-on-error: true # Don't fail if repo exists
 
+    # Create or update Firebase credentials secret in Secret Manager
+    - name: Create Firebase Credentials Secret
+      run: |
+        echo '${{ secrets.Gcloud }}' > authkey.json
+        gcloud secrets create firebase-credentials --data-file=authkey.json --project ${{ env.PROJECT_ID }} || \
+        gcloud secrets versions add firebase-credentials --data-file=authkey.json --project ${{ env.PROJECT_ID }}
+      continue-on-error: true # Don't fail if secret exists
+
     - name: Build and Push Docker image using Cloud Build
       run: |
         gcloud builds submit . \
@@ -62,5 +70,6 @@ jobs:
           --region ${{ env.REGION }} \
           --platform managed \
           --allow-unauthenticated \
+          --set-secrets=/secrets/firebase/authkey.json=firebase-credentials:latest \
           --project ${{ env.PROJECT_ID }}
         # Remove --allow-unauthenticated for production! 
