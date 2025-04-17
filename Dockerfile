@@ -4,14 +4,14 @@ FROM node:20-slim
 # Set working directory
 WORKDIR /usr/src/app
 
+# Create directory for Firebase credentials
+RUN mkdir -p /secrets/firebase
+
 # --- Dependency Installation ---
 # Copy package files first for better caching
 COPY package*.json ./
 
-# Install production dependencies cleanly
-# Note: 'concurrently' is needed to run both services.
-# Ensure 'concurrently' is listed under "dependencies" in your package.json, not just "devDependencies".
-# If not, run: npm install concurrently --save-prod
+# Install ALL dependencies (including devDependencies needed for the build)
 RUN npm ci
 
 # --- Application Code ---
@@ -20,8 +20,7 @@ COPY src ./src
 COPY main.exe ./main.exe
 
 # --- Build Step ---
-# Run the build script defined in package.json (adjust if needed)
-# This assumes the output is in the 'dist' directory
+# Run the build script defined in package.json (which needs devDependencies like @babel/cli)
 RUN npm run build
 
 # --- Permissions ---
@@ -35,7 +34,6 @@ EXPOSE 8080
 
 # --- Startup Command ---
 # Run both the Node.js server (from the build output) and the Go binary concurrently.
-# IMPORTANT: Ensure main.exe is configured to listen on a DIFFERENT port than the Node.js app (e.g., 8081).
+# IMPORTANT: Ensure main.exe is configured to listen on a DIFFERENT port than the Node.js app (e.g., 8090).
 # The Node.js app (dist/server.js) should listen on the port specified by the PORT env var (default 8080).
-# Example command assumes Node.js on $PORT (8080) and main.exe on 8081.
 CMD ["npx", "concurrently", "node dist/server.js", "./main.exe"] 
