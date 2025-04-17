@@ -10,7 +10,7 @@
     "dev:ts": "nodemon --watch ts/src --ext ts,json --exec ts-node ts/src/index.ts",
     "build": "mkdir -p dist && cp -r src/protos dist/protos && babel src --out-dir dist --copy-files",
     "build:ts": "tsc --project ts/tsconfig.json",
-    "postbuild": "powershell -Command \"Copy-Item -Path ./src/protos -Destination ./dist/protos -Recurse -Force\"",
+    "postbuild": "cp -r ./src/protos ./dist/protos",
     "test": "echo \"Error: no test specified\" && exit 1",
     "load-test": "node scripts/load-test.js",
     "stream-test": "node scripts/stream-test.js",
