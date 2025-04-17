@@ -28,25 +28,32 @@ dotenv.config({ override: false }); // Load .env but don't override existing env
 const fastify = Fastify({ logger: true }); // Added (with logger)
 const PORT = process.env.PORT || 8080;
 
-// --- Initialize Firebase Admin SDK --- 
+// --- Initialize Firebase Admin SDK ---
 try {
-  // Check if GOOGLE_APPLICATION_CREDENTIALS is set
-  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    throw new Error('GOOGLE_APPLICATION_CREDENTIALS environment variable not set. Firebase Admin SDK cannot initialize.');
+  // Check if either credential method is available
+  if (process.env.FIREBASE_CONFIG) {
+    // Use the FIREBASE_CONFIG environment variable directly
+    const firebaseConfig = JSON.parse(process.env.FIREBASE_CONFIG);
+    admin.initializeApp({
+      credential: admin.credential.cert(firebaseConfig)
+    });
+    logger.info("Firebase Admin SDK initialized successfully with FIREBASE_CONFIG.");
+  } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    // Fall back to application default credentials if FIREBASE_CONFIG not available
+    admin.initializeApp({
+      credential: admin.credential.applicationDefault(),
+    });
+    logger.info("Firebase Admin SDK initialized successfully with application default credentials.");
+  } else {
+    throw new Error('No Firebase credentials found. Set FIREBASE_CONFIG or GOOGLE_APPLICATION_CREDENTIALS environment variable.');
   }
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
-    // Optionally add databaseURL if using Realtime Database features
-    // databaseURL: `https://${process.env.FIREBASE_PROJECT_ID}.firebaseio.com`
-  });
-  logger.info("Firebase Admin SDK initialized successfully.");
 } catch (error) {
   logger.error("Firebase Admin SDK initialization error:", error);
   process.exit(1); // Exit if Firebase Admin fails to initialize
 }
 // ------------------------------------
 
-// --- Legacy Firebase Authentication Hook --- 
+// --- Legacy Firebase Authentication Hook ---
 // Keeping this for reference - now replaced with authenticateUser middleware
 async function firebaseAuthHook(request, reply) {
   logger.debug('=========== FIREBASE AUTH HOOK START ===========');
@@ -61,11 +68,11 @@ async function firebaseAuthHook(request, reply) {
       // Verify the ID token using Firebase Admin SDK
       const decodedToken = await admin.auth().verifyIdToken(idToken);
       // Attach decoded user information if token is valid
-      request.user = { 
+      request.user = {
         uid: decodedToken.uid,
         email: decodedToken.email,
         // Add other properties from decodedToken as needed
-      }; 
+      };
       logger.debug(`Authenticated user via hook: ${request.user.uid}`);
     } catch (error) {
       // Token provided but invalid/expired. Log warning but allow request to proceed
@@ -91,7 +98,7 @@ const start = async () => {
       origin: process.env.NODE_ENV === 'production' ? false : ['http://localhost:3001', 'http://localhost:3000','http://192.168.1.100:3001', 'http://localhost:3002','*'],
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       allowedHeaders: [
-        'Content-Type', 
+        'Content-Type',
         'Authorization',
         'Accept',
         'Cache-Control',
@@ -104,11 +111,11 @@ const start = async () => {
       maxAge: 86400 // 24 hours
     });
     await fastify.register(fastifyHelmet, {
-        // TODO: Review Helmet options for production.
-        // Disabling CSP/COEP might be insecure.
-        // Consider default policies or configuring them properly.
-        contentSecurityPolicy: false,
-        crossOriginEmbedderPolicy: false
+      // TODO: Review Helmet options for production.
+      // Disabling CSP/COEP might be insecure.
+      // Consider default policies or configuring them properly.
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false
     });
     await fastify.register(fastifyCompress);
 
@@ -134,8 +141,8 @@ const start = async () => {
     });
 
     // Register main API plugin
-    await fastify.register(mainApiRoutes, { 
-        prefix: "/api"
+    await fastify.register(mainApiRoutes, {
+      prefix: "/api"
     });
 
     // --- Register Error Handler ---
@@ -167,4 +174,3 @@ signals.forEach(signal => {
 });
 
 start();
-
