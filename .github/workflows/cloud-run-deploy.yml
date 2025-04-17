@@ -77,15 +77,7 @@ jobs:
 
     - name: Deploy to Cloud Run
       run: |
-        gcloud run deploy ${{ env.SERVICE_NAME }} \\
-          --image ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \\
-          --region ${{ env.REGION }} \\
-          --platform managed \\
-          --allow-unauthenticated \\
-          --env-vars-file config.yml \\
-          --set-secrets FIREBASE_CONFIG=firebase-credentials:latest \\
-          --set-env-vars "^@^OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}@GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}@ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}@OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}^@^" \\
-          --project ${{ env.PROJECT_ID }}
+        gcloud run deploy ${{ env.SERVICE_NAME }} --image ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }} --region ${{ env.REGION }} --platform managed --allow-unauthenticated --env-vars-file config.yml --set-secrets FIREBASE_CONFIG=firebase-credentials:latest --set-env-vars "^@^OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}@GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}@ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}@OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}^@^" --project ${{ env.PROJECT_ID }}
         # Remove --allow-unauthenticated for production!
 
     # Validate config.yml exists
