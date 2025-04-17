@@ -12,7 +12,7 @@ COPY package*.json ./
 # Note: 'concurrently' is needed to run both services.
 # Ensure 'concurrently' is listed under "dependencies" in your package.json, not just "devDependencies".
 # If not, run: npm install concurrently --save-prod
-RUN npm ci --omit=dev
+RUN npm ci
 
 # --- Application Code ---
 # Copy source code and pre-compiled binary
