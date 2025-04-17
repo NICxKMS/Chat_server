@@ -17,7 +17,7 @@ RUN npm ci
 # --- Application Code ---
 # Copy source code and pre-compiled binary
 COPY src ./src
-COPY main.exe ./main.exe
+COPY main ./main
 
 # --- Build Step ---
 # Run the build script defined in package.json (which needs devDependencies like @babel/cli)
@@ -25,7 +25,7 @@ RUN npm run build
 
 # --- Permissions ---
 # Make the Go binary executable
-RUN chmod +x ./main.exe
+RUN chmod +x ./main
 
 # --- Runtime Configuration ---
 # Inform Docker that the container listens on port 8080 (standard for Cloud Run)
@@ -34,6 +34,6 @@ EXPOSE 8080
 
 # --- Startup Command ---
 # Run both the Node.js server (from the build output) and the Go binary concurrently.
-# IMPORTANT: Ensure main.exe is configured to listen on a DIFFERENT port than the Node.js app (e.g., 8090).
+# IMPORTANT: Ensure main is configured to listen on a DIFFERENT port than the Node.js app (e.g., 8090).
 # The Node.js app (dist/server.js) should listen on the port specified by the PORT env var (default 8080).
-CMD ["npx", "concurrently", "node dist/server.js", "./main.exe"] 
+CMD ["npx", "concurrently", "node dist/server.js", "./main"] 
