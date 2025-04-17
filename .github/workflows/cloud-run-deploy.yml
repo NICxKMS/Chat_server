@@ -57,6 +57,10 @@ jobs:
         gcloud secrets versions add firebase-credentials --data-file=authkey.json --project ${{ env.PROJECT_ID }}
       continue-on-error: true # Don't fail if secret exists
 
+    # Create temporary .env file from GitHub secret
+    - name: Create temporary .env file
+      run: echo "${{ secrets.ENV_VARS }}" > .env.tmp
+
     - name: Build and Push Docker image using Cloud Build
       run: |
         gcloud builds submit . \
@@ -70,6 +74,7 @@ jobs:
           --region ${{ env.REGION }} \
           --platform managed \
           --allow-unauthenticated \
-          --set-secrets=/secrets/firebase/authkey.json=firebase-credentials:latest \
+          --env-vars-file .env.tmp \
+          --set-env-vars="FIREBASE_CONFIG='${{ secrets.Gcloud }}',NODE_ENV=production" \
           --project ${{ env.PROJECT_ID }}
         # Remove --allow-unauthenticated for production! 
