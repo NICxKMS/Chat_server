@@ -1,0 +1,66 @@
+name: Build and Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main # Or whichever branch triggers deployment (e.g., 'master', 'release')
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SERVICE_NAME: chat-api # Cloud Run service name
+  REGION: asia-south1   # Cloud Run region (Mumbai)
+  GAR_LOCATION: asia-south1 # Artifact Registry region (Mumbai)
+  REPOSITORY_NAME: chat-api-repo # Artifact Registry repo name
+
+jobs:
+  deploy:
+    name: Deploy to Cloud Run
+    runs-on: ubuntu-latest
+    # Permissions are still needed for checkout etc.
+    permissions:
+      contents: 'read'
+      id-token: 'write' # Can often be removed when not using WIF, but doesn't hurt
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud using Service Account Key
+      # uses: google-github-actions/auth@v2 # Comment out WIF
+      # with:
+      #   workload_identity_provider: 'projects/${{ env.PROJECT_ID }}/locations/global/workloadIdentityPools/YOUR_WIF_POOL_ID/providers/YOUR_WIF_PROVIDER_ID' # Replace with your WIF details
+      #   service_account: 'YOUR_SERVICE_ACCOUNT_EMAIL@${{ env.PROJECT_ID }}.iam.gserviceaccount.com' # Replace with your Service Account email
+      uses: google-github-actions/auth@v2 # Use SA Key authentication
+      with:
+        credentials_json: ${{ secrets.Gcloud }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Configure Docker for Artifact Registry
+      run: gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev
+
+    # Optional: Create Artifact Registry repository if it doesn't exist
+    - name: Create Artifact Registry Repository
+      run: |
+        gcloud artifacts repositories create ${{ env.REPOSITORY_NAME }} \
+          --repository-format=docker \
+          --location=${{ env.GAR_LOCATION }} \
+          --description="Docker repository for ${{ env.SERVICE_NAME }}" || echo "Repository already exists"
+      continue-on-error: true # Don't fail if repo exists
+
+    - name: Build and Push Docker image using Cloud Build
+      run: |
+        gcloud builds submit . \
+          --tag ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
+          --project ${{ env.PROJECT_ID }}
+
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy ${{ env.SERVICE_NAME }} \
+          --image ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
+          --region ${{ env.REGION }} \
+          --platform managed \
+          --allow-unauthenticated \
+          --project ${{ env.PROJECT_ID }}
+        # Remove --allow-unauthenticated for production! 
