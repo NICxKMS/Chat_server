@@ -10,6 +10,7 @@ import { getCircuitBreakerStates, createBreaker } from "../utils/circuitBreaker.
 import protoUtils from "../utils/protoUtils.js";
 import logger from "../utils/logger.js";
 import { applyCaching } from "./ModelControllerCache.js";
+import firestoreCacheService from '../services/FirestoreCacheService.js';
 
 class ModelController {
   constructor() {
@@ -283,7 +284,7 @@ class ModelController {
       
       // Use cached results if available
       const cacheKey = "classifiedModels";
-      const cachedData = await applyCaching(cacheKey, async () => {
+      const cachedData = await cache.getOrSet(cacheKey, async () => {
           // Fetch fresh provider info (or use cached if appropriate elsewhere)
           const providersInfo = await providerFactory.getProvidersInfo();
           
@@ -338,7 +339,7 @@ class ModelController {
 
       // Use caching based on criteria
       const cacheKey = `classifiedModelsCriteria:${JSON.stringify(criteria)}`;
-      const cachedData = await applyCaching(cacheKey, async () => {
+      const cachedData = await cache.getOrSet(cacheKey, async () => {
           // Call the classification service via the circuit breaker
           logger.debug("Calling classification service (criteria) via circuit breaker...");
           const classifiedModels = await this.criteriaBreaker.fire(criteria);
@@ -370,5 +371,7 @@ class ModelController {
 // Create singleton instance
 const controller = new ModelController();
 
-// Apply caching if Firestore cache is available
-export default applyCaching(controller); 
+// Apply Firestore caching only if enabled, otherwise use regular controller
+export default firestoreCacheService.isEnabled() ? 
+  applyCaching(controller) : 
+  controller; 

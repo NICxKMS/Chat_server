@@ -194,6 +194,34 @@ function getCategoryStats() {
 }
 
 /**
+ * Get a value from the cache or compute and set it if not found
+ * 
+ * @param {string} key - Cache key
+ * @param {Function} factory - Function to compute the value if not in cache
+ * @param {number} ttlSeconds - Time to live in seconds
+ * @param {string} category - Optional category for metrics
+ * @returns {Promise<any>} Cached or computed value
+ */
+async function getOrSet(key, factory, ttlSeconds = 60, category = "general") {
+  // Try to get from cache first
+  const cachedValue = await get(key, category);
+  
+  if (cachedValue !== null) {
+    return cachedValue;
+  }
+  
+  // If not in cache, compute the value
+  const computedValue = await factory();
+  
+  // Only cache if the value is not null/undefined
+  if (computedValue !== null && computedValue !== undefined) {
+    await set(key, computedValue, ttlSeconds, category);
+  }
+  
+  return computedValue;
+}
+
+/**
  * Check if cache is enabled
  * 
  * @returns {boolean} Whether cache is enabled
@@ -206,6 +234,7 @@ function isEnabled() {
 export {
   get,
   set,
+  getOrSet,
   invalidate,
   clear,
   generateKey,
