@@ -63,24 +63,29 @@ export function withCache(originalMethod, modelController) {
         
         // AFTER sending response, start background refresh without blocking
         runInBackground(async () => {
-          // Call the internal fetch method directly, no mock reply needed
-          const freshData = await modelController._fetchClassifiedModels();
+          // Call the original method but capture the response instead of sending
+          const mockReply = {
+            sent: false,
+            send: function(payload) {
+              this.payload = payload;
+              return this;
+            }
+          };
           
-          // Compare and update cache
-          if (freshData) {
+          await originalMethod.call(modelController, request, mockReply);
+          
+          // If the original method sent a response, compare and update cache
+          if (mockReply.payload) {
             await firestoreCacheService.updateIfChanged(
               userId, 
               cacheKey, 
-              freshData, 
-              cachedData.hash // Pass the hash of the data we sent to the client
+              mockReply.payload, 
+              cachedData.hash
             );
-          } else {
-            // Handle case where freshData is unexpectedly null/undefined if needed
-            logger.warn("Background cache refresh fetched null/undefined data.");
           }
         }, 'refresh-cache');
         
-        return; // Important: Return here as response was already sent
+        return;
       }
       
       // No cache found, call original method

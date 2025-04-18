@@ -100,8 +100,7 @@ const start = async () => {
         const allowedOrigins = [
           'http://localhost:3000'
         ];
-        // const allowedPattern = /\\.chat-api-9ru\\.pages\\.dev$/; // Regex for allowed Cloudflare Pages domain - Replaced with suffix check
-        const allowedDomainSuffix = '.chat-api-9ru.pages.dev'; // Allow any subdomain of this
+        const allowedPattern = /\\.chat-api-9ru\\.pages\\.dev$/; // Regex for allowed Cloudflare Pages domain
 
         if (process.env.NODE_ENV !== 'production') {
           // Allow common dev origins and wildcard in non-production
@@ -116,25 +115,12 @@ const start = async () => {
            return;
         } else {
            // Production CORS logic
-           if (!origin) { // Allow requests with no origin (like curl, server-to-server)
-             cb(null, true);
-             return;
-           }
-
-           try {
-             const originUrl = new URL(origin);
-             // Check if the origin is in the explicit list OR if its hostname ends with the allowed suffix
-             if (allowedOrigins.includes(origin) || originUrl.hostname.endsWith(allowedDomainSuffix)) {
-                cb(null, true); // Allow the origin
-             } else {
-                logger.warn(`CORS denied for origin: ${origin}`);
-                cb(new Error('Not allowed by CORS'), false); // Deny the origin
-             }
-           } catch (e) {
-              // Handle invalid origin format if necessary
-              logger.warn(`Invalid origin format received: ${origin}, denying CORS. Error: ${e.message}`);
-              cb(new Error('Invalid Origin Header'), false);
-           }
+          if (!origin || allowedOrigins.includes(origin) || allowedPattern.test(origin)) {
+            cb(null, true); // Allow the origin
+          } else {
+            logger.warn(`CORS denied for origin: ${origin}`);
+            cb(new Error('Not allowed by CORS'), false); // Deny the origin
+          }
         }
       },
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
