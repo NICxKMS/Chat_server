@@ -98,9 +98,11 @@ const start = async () => {
       // origin: process.env.NODE_ENV === 'production' ? false : ['http://localhost:3001', 'http://localhost:3000','http://192.168.1.100:3001', 'http://localhost:3002','*'], // OLD CORS logic
       origin: (origin, cb) => {
         const allowedOrigins = [
-          'http://localhost:3000'
+          'http://localhost:3000',
+          'https://chat-api-9ru.pages.dev'
         ];
-        const allowedPattern = /\\.chat-api-9ru\\.pages\\.dev$/; // Regex for allowed Cloudflare Pages domain
+        // const allowedPattern = /\\.chat-api-9ru\\.pages\\.dev$/; // Regex for allowed Cloudflare Pages domain - Replaced with suffix check
+        const allowedDomainSuffix = '.chat-api-9ru.pages.dev'; // Allow any subdomain of this
 
         if (process.env.NODE_ENV !== 'production') {
           // Allow common dev origins and wildcard in non-production
@@ -115,12 +117,25 @@ const start = async () => {
            return;
         } else {
            // Production CORS logic
-          if (!origin || allowedOrigins.includes(origin) || allowedPattern.test(origin)) {
-            cb(null, true); // Allow the origin
-          } else {
-            logger.warn(`CORS denied for origin: ${origin}`);
-            cb(new Error('Not allowed by CORS'), false); // Deny the origin
-          }
+           if (!origin) { // Allow requests with no origin (like curl, server-to-server)
+             cb(null, true);
+             return;
+           }
+
+           try {
+             const originUrl = new URL(origin);
+             // Check if the origin is in the explicit list OR if its hostname ends with the allowed suffix
+             if (allowedOrigins.includes(origin) || originUrl.hostname.endsWith(allowedDomainSuffix)) {
+                cb(null, true); // Allow the origin
+             } else {
+                logger.warn(`CORS denied for origin: ${origin}`);
+                cb(new Error('Not allowed by CORS'), false); // Deny the origin
+             }
+           } catch (e) {
+              // Handle invalid origin format if necessary
+              logger.warn(`Invalid origin format received: ${origin}, denying CORS. Error: ${e.message}`);
+              cb(new Error('Invalid Origin Header'), false);
+           }
         }
       },
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
