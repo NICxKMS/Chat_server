@@ -77,3 +77,4 @@ temp/
 # Miscellaneous
 .lock-wscript
 .grunt
+req.json
