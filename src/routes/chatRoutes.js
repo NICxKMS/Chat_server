@@ -24,6 +24,12 @@ async function chatRoutes (fastify, options) {
   fastify.post("/stream", chatController.chatCompletionStream);
 
   /**
+   * POST /stop (within plugin prefix)
+   * Endpoint for stopping an ongoing generation (streaming or non-streaming)
+   */
+  fastify.post("/stop", chatController.stopGeneration);
+
+  /**
    * GET /capabilities (within plugin prefix)
    * Get chat capabilities and system status
    */

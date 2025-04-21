@@ -14,12 +14,16 @@ const isPotentialBase64 = (str) => typeof str === 'string' && /^[A-Za-z0-9+/=]+$
 // Increased payload size limit for image data
 export const bodyLimit = 10 * 1024 * 1024; // 10MB
 
+// Map to store active generations (requestId -> AbortController)
+const activeGenerations = new Map();
+
 class ChatController {
   constructor() {
     // Bind methods (consider if still necessary with Fastify style)
     this.chatCompletion = this.chatCompletion.bind(this);
     this.chatCompletionStream = this.chatCompletionStream.bind(this);
     this.getChatCapabilities = this.getChatCapabilities.bind(this);
+    this.stopGeneration = this.stopGeneration.bind(this);
     logger.info("ChatController initialized");
   }
 
@@ -32,6 +36,8 @@ class ChatController {
   async chatCompletion(request, reply) {
     const startTime = Date.now();
     let providerName, modelName; // Declare here for potential use in error logging
+    let abortController = new AbortController();
+    const requestId = request.id || `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     
     try {
       metrics.incrementRequestCount();
@@ -67,7 +73,13 @@ class ChatController {
         });
       }
       
-      logger.info(`Processing chat request for ${providerName}/${modelName}`);
+      logger.info(`Processing chat request for ${providerName}/${modelName} (requestId: ${requestId})`);
+      
+      // Store the abort controller for potential stopping
+      activeGenerations.set(requestId, abortController);
+      
+      // Add request ID to response headers for clients to use when stopping
+      reply.header('X-Request-ID', requestId);
       
       // Cache check logic 
       try {
@@ -79,6 +91,10 @@ class ChatController {
             if (cachedResponse) {
               logger.info(`Cache hit for ${providerName}/${modelName}`);
               cachedResponse.cached = true;
+              
+              // Remove from active generations since we're using cached response
+              activeGenerations.delete(requestId);
+              
               return reply.send(cachedResponse); // Use reply.send
             }
           } catch (cacheError) {
@@ -94,7 +110,8 @@ class ChatController {
         model: modelName,
         messages,
         temperature: parseFloat(temperature?.toString() || "0.7"),
-        max_tokens: parseInt(max_tokens?.toString() || "1000", 10)
+        max_tokens: parseInt(max_tokens?.toString() || "1000", 10),
+        abortSignal: abortController.signal
       };
       
       // Add optional parameters only if they exist in the request
@@ -105,6 +122,9 @@ class ChatController {
       try {
         // Send request to provider (unchanged)
         const response = await provider.chatCompletion(options);
+        
+        // Remove from active generations after completion
+        activeGenerations.delete(requestId);
         
         // Cache set logic 
         try {
@@ -125,6 +145,18 @@ class ChatController {
         return reply.send(response); // Explicit return
 
       } catch (providerError) {
+        // Remove from active generations on error
+        activeGenerations.delete(requestId);
+        
+        // Check if this was an abort error
+        if (providerError.name === "AbortError" || providerError.message?.includes("aborted")) {
+          logger.info(`Request ${requestId} was aborted`);
+          return reply.status(499).send({
+            error: "Request aborted",
+            message: "The generation was stopped by the client"
+          });
+        }
+        
         logger.error(`Provider error in chatCompletion: ${providerError.message}`, { provider: providerName, model: modelName, stack: providerError.stack });
 
         // TODO: Review error handling strategy.
@@ -161,10 +193,21 @@ class ChatController {
 
       }
     } catch (error) {
+      // Remove from active generations on error
+      activeGenerations.delete(requestId);
+      
       // Catch errors from validation, provider setup, caching, or thrown provider errors
       logger.error(`Server error in chatCompletion handler: ${error.message}`, { provider: providerName, model: modelName, stack: error.stack });
       // Throw error to be handled by Fastify's central error handler
       throw error; 
+    }
+    
+    // Clean up in case of unexpected exit
+    finally {
+      // Remove from active generations on finally (safety measure)
+      if (requestId) {
+        activeGenerations.delete(requestId);
+      }
     }
   }
 
@@ -189,6 +232,10 @@ class ChatController {
     let ttfbRecorded = false;
     let chunkCounter = 0;
     let lastProviderChunk = null; // Variable to store the last chunk
+    const requestId = request.id || `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+    // Store the abort controller for potential stopping
+    activeGenerations.set(requestId, abortController);
 
     // Create a PassThrough stream with a low highWaterMark for immediate flushing
     const { PassThrough } = await import('node:stream');
@@ -218,6 +265,9 @@ class ChatController {
         if (errorType && providerName && modelName) {
           metrics.incrementStreamErrorCount(providerName, modelName, errorType);
         }
+
+        // Remove from active generations
+        activeGenerations.delete(requestId);
 
         // Send final [DONE] event to explicitly signal completion to clients
         try {
@@ -266,7 +316,7 @@ class ChatController {
         return reply.status(404).send({ error: `Provider '${providerName}' not found or not configured` });
       }
 
-      logger.info(`Processing STREAMING chat request for ${providerName}/${modelName}`);
+      logger.info(`Processing STREAMING chat request for ${providerName}/${modelName} (requestId: ${requestId})`);
       streamStartTime = Date.now();
       
       // Set headers optimized for streaming
@@ -275,6 +325,7 @@ class ChatController {
       reply.header('Connection', 'keep-alive');
       reply.header('X-Accel-Buffering', 'no'); // Prevent nginx buffering
       reply.header('Transfer-Encoding', 'chunked'); // Enable chunked encoding
+      reply.header('X-Request-ID', requestId); // Add request ID to response headers
       
       // Send the stream to the client
       reply.send(stream);
@@ -362,6 +413,26 @@ class ChatController {
     } catch (error) {
       // Handle errors
       logger.error(`Stream error: ${error.message}`, { provider: providerName, model: modelName, stack: error.stack });
+      
+      // Check if this was an abort error
+      if (error.name === "AbortError" || error.message?.includes("aborted")) {
+        // Send a special message for aborted requests
+        if (!streamClosed && !stream.writableEnded) {
+          try {
+            const abortEventData = {
+              type: "abort",
+              message: "Generation was stopped by the client"
+            };
+            stream.write(`event: abort\ndata: ${JSON.stringify(abortEventData)}\n\n`);
+          } catch (e) {
+            logger.warn(`Error sending abort event: ${e.message}`);
+          }
+        }
+        
+        safelyEndStream(`Stream aborted for ${providerName}/${modelName}`, "client_abort");
+        return; // Exit early
+      }
+      
       const errorType = "provider_error";
       
       // Check if headers have been sent
@@ -384,6 +455,9 @@ class ChatController {
         if (providerName && modelName) {
           metrics.incrementStreamErrorCount(providerName, modelName, errorType);
         }
+        
+        // Remove from active generations
+        activeGenerations.delete(requestId);
       } else if (!streamClosed && !stream.writableEnded) {
         // Headers ARE sent, try to send a structured error event over the stream
         const errorPayload = {
@@ -397,22 +471,58 @@ class ChatController {
         try {
           const sseErrorEvent = `event: error\ndata: ${JSON.stringify(errorPayload)}\n\n`;
           stream.write(sseErrorEvent);
-          logger.info(`Sent SSE error event for ${providerName}/${modelName}`);
-        } catch (writeError) {
-          logger.error("Failed to write SSE error event to stream:", writeError);
+          safelyEndStream(`Error sent to client for ${providerName}/${modelName}`, errorType);
+        } catch (e) {
+          logger.warn(`Error sending error event: ${e.message}`);
+          safelyEndStream(`Failed to send error to client for ${providerName}/${modelName}`, errorType);
         }
-        
-        // End the stream after attempting to send the error event
-        safelyEndStream(`Stream ended due to error: ${error.message}`, errorType);
-      } else {
-        // Stream already closed or not writable
-        logger.warn("Stream already closed or not writable when error occurred.");
-        if (providerName && modelName) {
-          metrics.incrementStreamErrorCount(providerName, modelName, errorType);
-        }
-        if (heartbeatInterval) { clearInterval(heartbeatInterval); }
-        if (timeoutCheckInterval) { clearInterval(timeoutCheckInterval); }
       }
+    }
+  }
+
+  /**
+   * Handles requests to stop an ongoing generation.
+   * Supports stopping both streaming and non-streaming requests.
+   * @param {FastifyRequest} request - Fastify request object
+   * @param {FastifyReply} reply - Fastify reply object
+   */
+  async stopGeneration(request, reply) {
+    try {
+      const { requestId } = request.body;
+      
+      if (!requestId) {
+        return reply.status(400).send({ 
+          error: "Missing required parameter: requestId" 
+        });
+      }
+      
+      // Look up the request in active generations
+      const abortController = activeGenerations.get(requestId);
+      
+      if (!abortController) {
+        return reply.status(404).send({ 
+          error: "Request not found or already completed",
+          message: `No active generation found with requestId: ${requestId}`
+        });
+      }
+      
+      // Abort the request
+      logger.info(`Stopping generation for requestId: ${requestId}`);
+      abortController.abort();
+      
+      // Remove from active generations
+      activeGenerations.delete(requestId);
+      
+      return reply.send({
+        success: true,
+        message: `Generation stopped for requestId: ${requestId}`
+      });
+    } catch (error) {
+      logger.error(`Error stopping generation: ${error.message}`, { stack: error.stack });
+      return reply.status(500).send({
+        error: "Failed to stop generation",
+        message: error.message
+      });
     }
   }
 
