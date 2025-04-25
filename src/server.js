@@ -103,7 +103,12 @@ const start = async () => {
         const allowedOrigins = [
           'http://localhost:3000',
           'https://chat-api-9ru.pages.dev',
-          'https://nicxkms.github.io/chat/'
+          'https://nicxkms.github.io',
+        ];
+        
+        // Allow any URL starting with https://nicxkms.github.io
+        const allowedDomainPrefixes = [
+          'https://nicxkms.github.io/'
         ];
         // const allowedPattern = /\\.chat-api-9ru\\.pages\\.dev$/; // Regex for allowed Cloudflare Pages domain - Replaced with suffix check
         const allowedDomainSuffix = '.chat-api-9ru.pages.dev'; // Allow any subdomain of this
@@ -129,7 +134,7 @@ const start = async () => {
            try {
              const originUrl = new URL(origin);
              // Check if the origin is in the explicit list OR if its hostname ends with the allowed suffix
-             if (allowedOrigins.includes(origin) || originUrl.hostname.endsWith(allowedDomainSuffix)) {
+             if (allowedOrigins.includes(origin) || originUrl.hostname.endsWith(allowedDomainSuffix || allowedDomainPrefixes.some(prefix => origin.startsWith(prefix)))) {
                 cb(null, true); // Allow the origin
              } else {
                 logger.warn(`CORS denied for origin: ${origin}`);
