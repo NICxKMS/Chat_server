@@ -102,7 +102,8 @@ const start = async () => {
       origin: (origin, cb) => {
         const allowedOrigins = [
           'http://localhost:3000',
-          'https://chat-api-9ru.pages.dev'
+          'https://chat-api-9ru.pages.dev',
+          'https://nicxkms.github.io/chat/'
         ];
         // const allowedPattern = /\\.chat-api-9ru\\.pages\\.dev$/; // Regex for allowed Cloudflare Pages domain - Replaced with suffix check
         const allowedDomainSuffix = '.chat-api-9ru.pages.dev'; // Allow any subdomain of this
