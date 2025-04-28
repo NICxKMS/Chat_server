@@ -16,7 +16,6 @@ import { authenticateUser } from "./middleware/auth/index.js"; // New auth middl
 import config from "./config/config.js";
 import admin from "firebase-admin"; // Added Firebase Admin
 import logger from "./utils/logger.js"; // Import logger
-import modelRoutes from "./routes/modelRoutes.js";
 import { isEnabled as isCacheEnabled } from "./utils/cache.js"; // Import specific function
 import { bodyLimit as chatBodyLimit } from "./controllers/ChatController.js"; // Import bodyLimit
 
@@ -102,9 +101,12 @@ const start = async () => {
       origin: (origin, cb) => {
         const allowedOrigins = [
           "http://localhost:3000",
-          "https://chat-api-9ru.pages.dev"
+          "https://chat-api-9ru.pages.dev",
+          "https://nicxkms.github.io/chat-api/",
+          "https://nicxkms.github.io"
         ];
         // const allowedPattern = /\\.chat-api-9ru\\.pages\\.dev$/; // Regex for allowed Cloudflare Pages domain - Replaced with suffix check
+        const allowedDomainPrefix = "nicxkms.github.io";
         const allowedDomainSuffix = ".chat-api-9ru.pages.dev"; // Allow any subdomain of this
 
         if (process.env.NODE_ENV !== "production") {
@@ -128,7 +130,7 @@ const start = async () => {
           try {
             const originUrl = new URL(origin);
             // Check if the origin is in the explicit list OR if its hostname ends with the allowed suffix
-            if (allowedOrigins.includes(origin) || originUrl.hostname.endsWith(allowedDomainSuffix)) {
+            if (allowedOrigins.includes(origin) || originUrl.hostname.endsWith(allowedDomainSuffix) || originUrl.hostname.startsWith(allowedDomainPrefix)) {
               cb(null, true); // Allow the origin
             } else {
               logger.warn(`CORS denied for origin: ${origin}`);

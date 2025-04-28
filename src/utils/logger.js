@@ -35,7 +35,8 @@ const logger = winston.createLogger({
         winston.format.colorize(),
         winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
         logFormat
-      )
+      ),
+      stderrLevels: ["error", "warn"]
     }),
     // File transport for production
     ...(config.environment === "production" 
