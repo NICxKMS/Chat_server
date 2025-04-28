@@ -173,9 +173,9 @@ export class AnthropicProvider extends BaseProvider {
       if (message.role === "system") {
         // Capture the first system message content
         if (systemPrompt === undefined) {
-          if (typeof message.content === 'string') {
+          if (typeof message.content === "string") {
             systemPrompt = message.content;
-          } else if (Array.isArray(message.content) && message.content[0]?.type === 'text') {
+          } else if (Array.isArray(message.content) && message.content[0]?.type === "text") {
             // Handle array format for system prompt if needed (usually just text)
             systemPrompt = message.content[0].text;
           }
@@ -225,19 +225,19 @@ export class AnthropicProvider extends BaseProvider {
 
     // Anthropic API requires messages to alternate between user and assistant.
     // Add an empty user message if the sequence starts with assistant.
-    if (anthropicMessages.length > 0 && anthropicMessages[0].role === 'assistant') {
-        anthropicMessages.unshift({ role: 'user', content: [{ type: 'text', text: '' }] }); // Or a more meaningful placeholder
-         logger.warn("Anthropic message sequence started with assistant. Prepending empty user message.");
+    if (anthropicMessages.length > 0 && anthropicMessages[0].role === "assistant") {
+      anthropicMessages.unshift({ role: "user", content: [{ type: "text", text: "" }] }); // Or a more meaningful placeholder
+      logger.warn("Anthropic message sequence started with assistant. Prepending empty user message.");
     }
     // Ensure the last message is not from the assistant (API requirement)
-     if (anthropicMessages.length > 0 && anthropicMessages[anthropicMessages.length - 1].role === 'assistant') {
-        // Anthropic API often errors if the last message is from the assistant.
-        // Option 1: Append an empty user message (might not be ideal for all scenarios)
-        // anthropicMessages.push({ role: 'user', content: [{ type: 'text', text: '' }] });
-        // logger.warn("Last message to Anthropic was from assistant. API might error.");
-        // Option 2: Log a warning and let it potentially fail (more informative)
-        logger.warn("Last message to Anthropic is from the assistant. The API might reject this sequence.");
-        // Option 3: Depending on use case, could trim the last assistant message, but that loses context.
+    if (anthropicMessages.length > 0 && anthropicMessages[anthropicMessages.length - 1].role === "assistant") {
+      // Anthropic API often errors if the last message is from the assistant.
+      // Option 1: Append an empty user message (might not be ideal for all scenarios)
+      // anthropicMessages.push({ role: 'user', content: [{ type: 'text', text: '' }] });
+      // logger.warn("Last message to Anthropic was from assistant. API might error.");
+      // Option 2: Log a warning and let it potentially fail (more informative)
+      logger.warn("Last message to Anthropic is from the assistant. The API might reject this sequence.");
+      // Option 3: Depending on use case, could trim the last assistant message, but that loses context.
     }
 
 
@@ -260,21 +260,20 @@ export class AnthropicProvider extends BaseProvider {
    * Raw completion API call to Anthropic
    */
   async rawCompletion(params) {
-    try {
-      const startTime = Date.now();
-      
-      // Make API request
-      const response = await this.httpClient.post("/v1/messages", params);
-      
-      // Calculate latency
-      const latency = Date.now() - startTime;
-      
-      // Parse response
-      return this.parseResponse(response.data, params.model, latency);
-    } catch (error) {
-      logger.error(`Error in Anthropic rawCompletion: ${error.message}`);
-      throw error;
-    }
+    // Destructure abortSignal out of params
+    const { abortSignal, ...bodyParams } = params;
+    const startTime = Date.now();
+    // Make API request with abort signal support
+    const response = await this.httpClient.post(
+      "/v1/messages",
+      bodyParams,
+      { signal: abortSignal }
+    );
+
+    // Calculate latency
+    const latency = Date.now() - startTime;
+    // Parse response
+    return this.parseResponse(response.data, params.model, latency);
   }
 
   /**
@@ -392,7 +391,9 @@ export class AnthropicProvider extends BaseProvider {
         messages: anthropicMessages,
         max_tokens: standardOptions.max_tokens || 4096,
         temperature: standardOptions.temperature ?? 0.7, // Use nullish coalescing for 0 temperature
-        stream: false
+        stream: false,
+        // Include abort signal for cancellation
+        abortSignal: standardOptions.abortSignal
       };
 
       // Add optional parameters if provided
@@ -403,14 +404,11 @@ export class AnthropicProvider extends BaseProvider {
 
       logger.debug(`Sending non-streaming request to Anthropic with model: ${params.model}`);
 
-      // Use circuit breaker to make the raw API call
-      // Note: The breaker function `rawCompletion` needs to be adapted or this call structure adjusted
-      // Assuming rawCompletion will be updated to match this param structure
+      // Use circuit breaker to make the raw API call, passing abortSignal
       return await this.completionBreaker.fire(params);
 
     } catch (error) {
       logger.error(`Error in Anthropic chatCompletion: ${error.message}`);
-      // Consider using a centralized error handler or re-throwing specific types
       throw this.handleError(error); // Use existing error handling
     }
   }
@@ -418,14 +416,18 @@ export class AnthropicProvider extends BaseProvider {
   /**
    * Send a streaming chat completion request to Anthropic
    */
-   async *chatCompletionStream(options) {
+  async *chatCompletionStream(options) {
+    // Declare variables for abort support
     let streamStartTime;
     let modelName;
+    let standardOptions;
+    let stream;
+    let cleanupStream;
     try {
       // Standardize and validate options
-      const standardOptions = this.standardizeOptions(options);
+      standardOptions = this.standardizeOptions(options);
       this.validateOptions(standardOptions);
-      modelName = standardOptions.model || this.defaultModel; // Capture model name for metrics
+      modelName = standardOptions.model || this.defaultModel;
 
       // Process messages into Anthropic format
       const { anthropicMessages, systemPrompt } = this.createMessages(standardOptions.messages);
@@ -448,12 +450,27 @@ export class AnthropicProvider extends BaseProvider {
       logger.debug(`Sending streaming request to Anthropic with model: ${params.model}`);
 
       streamStartTime = Date.now();
+      // Prepare HTTP config with abort signal
+      const requestConfig = { responseType: "stream" };
+      if (standardOptions.abortSignal instanceof AbortSignal) {
+        requestConfig.signal = standardOptions.abortSignal;
+      }
+      const response = await this.httpClient.post(
+        "/v1/messages",
+        params,
+        requestConfig
+      );
+      stream = response.data;
 
-      // Make the streaming API request directly using httpClient
-      // Circuit breaker integration for streams needs careful handling (e.g., break on initial connection failure)
-      const response = await this.httpClient.post("/v1/messages", params, {
-        responseType: 'stream'
-      });
+      // Insert cleanup function and abort listener
+      cleanupStream = () => {
+        if (stream && !stream.destroyed && typeof stream.destroy === "function") {
+          try { stream.destroy(); } catch (e) { logger.error("Error destroying stream:", e); }
+        }
+      };
+      if (standardOptions.abortSignal instanceof AbortSignal) {
+        standardOptions.abortSignal.addEventListener("abort", cleanupStream, { once: true });
+      }
 
       let accumulatedLatency = 0; // Only for TTFB
       let firstChunk = true;
@@ -462,7 +479,7 @@ export class AnthropicProvider extends BaseProvider {
       let currentMessageId = null;
 
       // Process the stream
-      for await (const chunk of response.data) {
+      for await (const chunk of stream) {
         const chunkLatency = firstChunk ? Date.now() - streamStartTime : 0;
         accumulatedLatency += chunkLatency;
 
@@ -473,92 +490,97 @@ export class AnthropicProvider extends BaseProvider {
         }
 
         // Process the chunk (assuming it's line-delimited JSON)
-        const lines = chunk.toString('utf8').split('\n').filter(line => line.trim() !== '');
+        const lines = chunk.toString("utf8").split("\n").filter(line => line.trim() !== "");
         for (const line of lines) {
-          if (line.startsWith('event:')) {
-             const eventType = line.replace('event:', '').trim();
-             const dataLine = lines.find(l => l.startsWith('data:')); // Find corresponding data line
-             if (dataLine) {
-                const dataStr = dataLine.replace('data:', '').trim();
-                try {
-                  const data = JSON.parse(dataStr);
-                   // Update usage and finish reason based on events
-                   if (eventType === 'message_start' && data.message) {
-                      currentMessageId = data.message.id;
-                      if(data.message.usage) {
-                           usage.promptTokens = data.message.usage.input_tokens || 0;
-                           usage.totalTokens = usage.promptTokens; // Initialize total
-                      }
-                   }
-                   if (eventType === 'message_delta' && data.usage) {
-                       usage.completionTokens = data.usage.output_tokens || 0;
-                       usage.totalTokens = usage.promptTokens + usage.completionTokens;
-                   }
-                    if (eventType === 'message_stop' && data.message) { // Anthropic uses message_stop for the final message state
-                       // Finish reason might be in the top-level anthropic_version specific block
-                       // Need to check the actual structure from Anthropic docs/tests
-                       finishReason = data["message"]?.stop_reason || "stop"; // Example access path
-                       // Ensure usage reflects the final count if provided here
-                        if(data.message.usage) {
-                           usage.completionTokens = data.message.usage.output_tokens || usage.completionTokens;
-                           usage.totalTokens = usage.promptTokens + usage.completionTokens;
-                        }
-                    }
-
-                   const normalizedChunk = this._normalizeStreamChunk(eventType, data, modelName, chunkLatency, finishReason, usage, currentMessageId);
-                   if (normalizedChunk) { // Only yield if normalization produced a chunk
-                      yield normalizedChunk;
-                   }
-                } catch (parseError) {
-                  logger.warn(`Failed to parse Anthropic stream data: ${parseError.message}`, { line });
+          if (line.startsWith("event:")) {
+            const eventType = line.replace("event:", "").trim();
+            const dataLine = lines.find(l => l.startsWith("data:")); // Find corresponding data line
+            if (dataLine) {
+              const dataStr = dataLine.replace("data:", "").trim();
+              try {
+                const data = JSON.parse(dataStr);
+                // Update usage and finish reason based on events
+                if (eventType === "message_start" && data.message) {
+                  currentMessageId = data.message.id;
+                  if(data.message.usage) {
+                    usage.promptTokens = data.message.usage.input_tokens || 0;
+                    usage.totalTokens = usage.promptTokens; // Initialize total
+                  }
                 }
-             }
+                if (eventType === "message_delta" && data.usage) {
+                  usage.completionTokens = data.usage.output_tokens || 0;
+                  usage.totalTokens = usage.promptTokens + usage.completionTokens;
+                }
+                if (eventType === "message_stop" && data.message) { // Anthropic uses message_stop for the final message state
+                  // Finish reason might be in the top-level anthropic_version specific block
+                  // Need to check the actual structure from Anthropic docs/tests
+                  finishReason = data["message"]?.stop_reason || "stop"; // Example access path
+                  // Ensure usage reflects the final count if provided here
+                  if(data.message.usage) {
+                    usage.completionTokens = data.message.usage.output_tokens || usage.completionTokens;
+                    usage.totalTokens = usage.promptTokens + usage.completionTokens;
+                  }
+                }
+
+                const normalizedChunk = this._normalizeStreamChunk(eventType, data, modelName, chunkLatency, finishReason, usage, currentMessageId);
+                if (normalizedChunk) { // Only yield if normalization produced a chunk
+                  yield normalizedChunk;
+                }
+              } catch (parseError) {
+                logger.warn(`Failed to parse Anthropic stream data: ${parseError.message}`, { line });
+              }
+            }
           } // else ignore non-event lines
         }
       }
-       logger.info(`Anthropic stream completed for model ${modelName}. Finish Reason: ${finishReason}`);
-       // Send final chunk if needed (Anthropic might not require explicit DONE)
-        yield {
-             id: currentMessageId ? `${currentMessageId}-final` : `anthropic-final-${Date.now()}`,
-             model: modelName,
-             provider: this.name,
-             createdAt: new Date().toISOString(),
-             content: null,
-             usage: usage,
-             latency: 0,
-             finishReason: finishReason,
-             raw: null // No final raw object unless specifically available
-           };
-
+      logger.info(`Anthropic stream completed for model ${modelName}. Finish Reason: ${finishReason}`);
+      // Send final chunk if needed (Anthropic might not require explicit DONE)
+      yield {
+        id: currentMessageId ? `${currentMessageId}-final` : `anthropic-final-${Date.now()}`,
+        model: modelName,
+        provider: this.name,
+        createdAt: new Date().toISOString(),
+        content: null,
+        usage: usage,
+        latency: 0,
+        finishReason: finishReason,
+        raw: null // No final raw object unless specifically available
+      };
 
     } catch (error) {
       const streamLatency = streamStartTime ? Date.now() - streamStartTime : 0;
       logger.error(`Anthropic stream error: ${error.message}`, { model: modelName, error });
-      metrics.incrementStreamErrorCount(this.name, modelName, error.response?.status || 'unknown');
+      metrics.incrementStreamErrorCount(this.name, modelName, error.response?.status || "unknown");
 
       // Yield a final error chunk
-       yield {
-         id: `anthropic-stream-error-${Date.now()}`,
-         model: modelName,
-         provider: this.name,
-         error: {
-           message: `Anthropic stream error: ${error.response?.data?.error?.message || error.message}`,
-           code: error.response?.status || 500,
-           type: error.response?.data?.error?.type || 'ProviderStreamError'
-         },
-         finishReason: "error",
-         usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-         latency: streamLatency
-       };
-       // Handle stream cleanup if necessary
-       // throw error; // Optional: rethrow
+      yield {
+        id: `anthropic-stream-error-${Date.now()}`,
+        model: modelName,
+        provider: this.name,
+        error: {
+          message: `Anthropic stream error: ${error.response?.data?.error?.message || error.message}`,
+          code: error.response?.status || 500,
+          type: error.response?.data?.error?.type || "ProviderStreamError"
+        },
+        finishReason: "error",
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        latency: streamLatency
+      };
+      // Handle stream cleanup if necessary
+      // throw error; // Optional: rethrow
 
     } finally {
-       if (streamStartTime) {
-         const durationSeconds = (Date.now() - streamStartTime) / 1000;
-         metrics.recordStreamDuration(this.name, modelName, durationSeconds);
-       }
-       // Perform any necessary cleanup, e.g., aborting requests if using AbortController
+      if (streamStartTime) {
+        const durationSeconds = (Date.now() - streamStartTime) / 1000;
+        metrics.recordStreamDuration(this.name, modelName, durationSeconds);
+      }
+      // Remove abort listener and destroy the stream
+      if (standardOptions?.abortSignal instanceof AbortSignal) {
+        standardOptions.abortSignal.removeEventListener("abort", cleanupStream);
+      }
+      if (cleanupStream) {
+        cleanupStream();
+      }
     }
   }
 
@@ -576,15 +598,15 @@ export class AnthropicProvider extends BaseProvider {
   _normalizeStreamChunk(eventType, data, model, latency, finishReason, usage, messageId) {
     let contentDelta = null;
 
-    if (eventType === 'content_block_delta' && data.delta?.type === 'text_delta') {
+    if (eventType === "content_block_delta" && data.delta?.type === "text_delta") {
       contentDelta = data.delta.text;
-    } else if (eventType === 'message_delta' && data.delta?.type === 'text_delta') {
-        // Older Anthropic versions might use message_delta for text
-        contentDelta = data.delta.text;
+    } else if (eventType === "message_delta" && data.delta?.type === "text_delta") {
+      // Older Anthropic versions might use message_delta for text
+      contentDelta = data.delta.text;
     }
 
     // Only yield chunks that contain actual text content delta
-    if (contentDelta !== null && contentDelta !== '') {
+    if (contentDelta !== null && contentDelta !== "") {
       return {
         id: messageId ? `${messageId}-chunk-${Date.now()}` : `anthropic-chunk-${Date.now()}`,
         model: model,
@@ -596,9 +618,9 @@ export class AnthropicProvider extends BaseProvider {
         finishReason: finishReason, // Include current finish reason state
         raw: { type: eventType, delta: data.delta } // Include minimal raw delta info
       };
-    } else if (eventType === 'message_stop') {
-        // We handle the final meta-information yield outside this function
-        return null;
+    } else if (eventType === "message_stop") {
+      // We handle the final meta-information yield outside this function
+      return null;
     }
     
     // Ignore other event types like message_start, content_block_start, ping etc. for standard chunk output

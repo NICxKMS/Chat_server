@@ -9,10 +9,14 @@ import { getCircuitBreakerStates } from "../utils/circuitBreaker.js";
 import logger from "../utils/logger.js";
 
 // Helper function to roughly validate base64 (more robust checks might be needed)
-const isPotentialBase64 = (str) => typeof str === 'string' && /^[A-Za-z0-9+/=]+$/.test(str) && str.length % 4 === 0;
+const isPotentialBase64 = (str) => typeof str === "string" && /^[A-Za-z0-9+/=]+$/.test(str) && str.length % 4 === 0;
 
 // Increased payload size limit for image data
 export const bodyLimit = 10 * 1024 * 1024; // 10MB
+
+// Heartbeat and inactivity timeout settings
+const HEARTBEAT_INTERVAL_MS = 15000; // Send a heartbeat every 15 seconds
+const TIMEOUT_DURATION_MS = 120000; // Timeout stream after 2 minutes of inactivity
 
 // Map to store active generations (requestId -> AbortController)
 const activeGenerations = new Map();
@@ -36,8 +40,10 @@ class ChatController {
   async chatCompletion(request, reply) {
     const startTime = Date.now();
     let providerName, modelName; // Declare here for potential use in error logging
+    // Create an AbortController and derive requestId (client-supplied wins)
     let abortController = new AbortController();
-    const requestId = request.id || `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const clientRequestId = request.body?.requestId;
+    const requestId = clientRequestId || request.id || `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     
     try {
       metrics.incrementRequestCount();
@@ -75,11 +81,11 @@ class ChatController {
       
       logger.info(`Processing chat request for ${providerName}/${modelName} (requestId: ${requestId})`);
       
-      // Store the abort controller for potential stopping
+      // Store the abort controller keyed by our requestId
       activeGenerations.set(requestId, abortController);
       
-      // Add request ID to response headers for clients to use when stopping
-      reply.header('X-Request-ID', requestId);
+      // Echo the requestId back for consistency
+      reply.header("X-Request-ID", requestId);
       
       // Cache check logic 
       try {
@@ -115,9 +121,9 @@ class ChatController {
       };
       
       // Add optional parameters only if they exist in the request
-      if (top_p !== undefined) options.top_p = parseFloat(top_p);
-      if (frequency_penalty !== undefined) options.frequency_penalty = parseFloat(frequency_penalty);
-      if (presence_penalty !== undefined) options.presence_penalty = parseFloat(presence_penalty);
+      if (top_p !== undefined) {options.top_p = parseFloat(top_p);}
+      if (frequency_penalty !== undefined) {options.frequency_penalty = parseFloat(frequency_penalty);}
+      if (presence_penalty !== undefined) {options.presence_penalty = parseFloat(presence_penalty);}
       
       try {
         // Send request to provider (unchanged)
@@ -142,6 +148,7 @@ class ChatController {
         }
         
         // Return the response using reply.send
+        console.log(response);
         return reply.send(response); // Explicit return
 
       } catch (providerError) {
@@ -225,20 +232,20 @@ class ChatController {
     let lastActivityTime = Date.now();
     let heartbeatInterval = null;
     let timeoutCheckInterval = null;
+    // Create the abort controller and derive requestId (client-supplied wins)
     let abortController = new AbortController();
-    const HEARTBEAT_INTERVAL_MS = 20000;
-    const TIMEOUT_DURATION_MS = 60000;
+    const clientRequestId = request.body?.requestId;
+    const requestId = clientRequestId || request.id || `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     let streamStartTime = null;
     let ttfbRecorded = false;
     let chunkCounter = 0;
     let lastProviderChunk = null; // Variable to store the last chunk
-    const requestId = request.id || `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
     // Store the abort controller for potential stopping
     activeGenerations.set(requestId, abortController);
 
     // Create a PassThrough stream with a low highWaterMark for immediate flushing
-    const { PassThrough } = await import('node:stream');
+    const { PassThrough } = await import("node:stream");
     const stream = new PassThrough({ 
       highWaterMark: 1,  // Use smallest highWaterMark to ensure immediate chunk delivery
       autoDestroy: true  // Automatically destroy when finished
@@ -320,12 +327,13 @@ class ChatController {
       streamStartTime = Date.now();
       
       // Set headers optimized for streaming
-      reply.header('Content-Type', 'text/event-stream');
-      reply.header('Cache-Control', 'no-cache, no-transform');
-      reply.header('Connection', 'keep-alive');
-      reply.header('X-Accel-Buffering', 'no'); // Prevent nginx buffering
-      reply.header('Transfer-Encoding', 'chunked'); // Enable chunked encoding
-      reply.header('X-Request-ID', requestId); // Add request ID to response headers
+      reply.header("Content-Type", "text/event-stream");
+      reply.header("Cache-Control", "no-cache, no-transform");
+      reply.header("Connection", "keep-alive");
+      reply.header("X-Accel-Buffering", "no"); // Prevent nginx buffering
+      reply.header("Transfer-Encoding", "chunked"); // Enable chunked encoding
+      // Echo the client requestId for stop calls
+      reply.header("X-Request-ID", requestId);
       
       // Send the stream to the client
       reply.send(stream);
@@ -366,16 +374,16 @@ class ChatController {
       };
       
       // Add optional parameters only if they exist in the request
-      if (top_p !== undefined) options.top_p = parseFloat(top_p);
-      if (frequency_penalty !== undefined) options.frequency_penalty = parseFloat(frequency_penalty);
-      if (presence_penalty !== undefined) options.presence_penalty = parseFloat(presence_penalty);
+      if (top_p !== undefined) {options.top_p = parseFloat(top_p);}
+      if (frequency_penalty !== undefined) {options.frequency_penalty = parseFloat(frequency_penalty);}
+      if (presence_penalty !== undefined) {options.presence_penalty = parseFloat(presence_penalty);}
 
       // Get provider stream
       const providerStream = provider.chatCompletionStream(options);
-      
       // Optimized stream processing with immediate chunk writing
       for await (const chunk of providerStream) {
         lastProviderChunk = chunk; // Store the latest chunk
+        console.log(chunk);
         if (streamClosed) { break; }
         lastActivityTime = Date.now(); 
         chunkCounter++;
@@ -396,7 +404,7 @@ class ChatController {
             stream.write(sseFormattedChunk);
             
             // Force immediate flush after each chunk for optimal responsiveness
-            if (typeof stream.uncork === 'function') {
+            if (typeof stream.uncork === "function") {
               stream.uncork();
             }
           } catch (writeError) {
@@ -445,7 +453,7 @@ class ChatController {
         // Determine appropriate status code from error if possible
         const statusCode = error.status || 500;
         reply.status(statusCode)
-          .type('application/json') // Explicitly set content type
+          .type("application/json") // Explicitly set content type
           .send(JSON.stringify({  // Explicitly stringify
             error: "Stream processing error", 
             message: error.message 
@@ -496,26 +504,19 @@ class ChatController {
         });
       }
       
-      // Look up the request in active generations
+      // Look up the abort controller (idempotent stop)
       const abortController = activeGenerations.get(requestId);
-      
-      if (!abortController) {
-        return reply.status(404).send({ 
-          error: "Request not found or already completed",
-          message: `No active generation found with requestId: ${requestId}`
-        });
+      if (abortController) {
+        logger.info(`Stopping generation for requestId: ${requestId}`);
+        abortController.abort();
+        activeGenerations.delete(requestId);
+      } else {
+        logger.info(`No active generation for requestId: ${requestId}, ignoring stop call`);
       }
-      
-      // Abort the request
-      logger.info(`Stopping generation for requestId: ${requestId}`);
-      abortController.abort();
-      
-      // Remove from active generations
-      activeGenerations.delete(requestId);
       
       return reply.send({
         success: true,
-        message: `Generation stopped for requestId: ${requestId}`
+        message: `Generation stop processed for requestId: ${requestId}`
       });
     } catch (error) {
       logger.error(`Error stopping generation: ${error.message}`, { stack: error.stack });

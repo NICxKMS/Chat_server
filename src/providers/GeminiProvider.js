@@ -302,7 +302,7 @@ class GeminiProvider extends BaseProvider {
       
       // Record successful request metrics
       responseTimeHistogram.observe(latency / 1000);
-      metrics.incrementProviderRequestCount(this.name, options.model, 'success');
+      metrics.incrementProviderRequestCount(this.name, options.model, "success");
       
       return response;
     } catch (error) {
@@ -343,7 +343,7 @@ class GeminiProvider extends BaseProvider {
    */
   async _rawChatCompletion(options) {
     const startTime = Date.now(); // Move startTime to the beginning of the method
-    const modelName = options.model.startsWith("gemini-") ? options.model : `gemini-1.0-pro`; // Fallback model? Revisit
+    const modelName = options.model.startsWith("gemini-") ? options.model : "gemini-1.0-pro"; // Fallback model? Revisit
     const generativeModel = this.genAI.getGenerativeModel({ model: modelName });
 
     const { contents, systemInstruction } = this._processMessages(options.messages);
@@ -358,7 +358,7 @@ class GeminiProvider extends BaseProvider {
       // topK: options.top_k // Map if available in options
     };
     if (options.stop) {
-        generationConfig.stopSequences = Array.isArray(options.stop) ? options.stop : [options.stop];
+      generationConfig.stopSequences = Array.isArray(options.stop) ? options.stop : [options.stop];
     }
 
     // Prepare safety settings (example - adjust as needed)
@@ -381,10 +381,14 @@ class GeminiProvider extends BaseProvider {
       requestPayload.systemInstruction = systemInstruction;
     }
 
+    // Extract abortSignal for cancellation support
+    const abortSignal = options.abortSignal;
+    
     try {
-      logger.debug({ geminiPayload: requestPayload }, "Sending request to Gemini"); // Log payload for debugging
+      // logger.debug({ geminiPayload: requestPayload }, "Sending request to Gemini"); // Log payload for debugging
 
-      const result = await generativeModel.generateContent(requestPayload);
+      // Propagate abortSignal to the underlying fetch call
+      const result = await generativeModel.generateContent(requestPayload, { signal: abortSignal });
       const response = result.response; // Access the response object
 
       const latency = Date.now() - startTime;
@@ -393,16 +397,16 @@ class GeminiProvider extends BaseProvider {
         .labels(this.name, modelName, "200")
         .observe(latency / 1000); // Observe in seconds
 
-      logger.debug({ geminiResponse: response }, "Received response from Gemini");
+      // logger.debug({ geminiResponse: response }, "Received response from Gemini");
 
       // Extract text content safely
       const textContent = response?.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const finishReason = response?.candidates?.[0]?.finishReason || "unknown";
       // Usage data might be in promptFeedback or elsewhere depending on API version/response structure
       const usage = {
-          promptTokens: response?.usageMetadata?.promptTokenCount || 0,
-          completionTokens: response?.usageMetadata?.candidatesTokenCount || 0,
-          totalTokens: response?.usageMetadata?.totalTokenCount || 0,
+        promptTokens: response?.usageMetadata?.promptTokenCount || 0,
+        completionTokens: response?.usageMetadata?.candidatesTokenCount || 0,
+        totalTokens: response?.usageMetadata?.totalTokenCount || 0,
       };
 
       return {
@@ -425,7 +429,7 @@ class GeminiProvider extends BaseProvider {
         .observe(latency / 1000);
 
       // Handle specific Gemini errors if possible (e.g., safety blocks)
-      if (error.message.includes('SAFETY')) {
+      if (error.message.includes("SAFETY")) {
         // Handle safety blocks - maybe return a specific error message
         return {
           id: `gemini-err-${Date.now()}`,
@@ -457,19 +461,19 @@ class GeminiProvider extends BaseProvider {
 
     messages.forEach(message => {
       // Handle system instruction (only the first one is usually used by Gemini)
-      if (message.role === 'system' && !systemInstruction) {
-          // Gemini expects system instruction as a separate object with a 'parts' array
-          if (typeof message.content === 'string') {
-              systemInstruction = { parts: [{ text: message.content }] };
-          } else if (Array.isArray(message.content) && message.content.length > 0 && message.content[0].type === 'text') {
-              // Handle potential array format if system prompt ever becomes multimodal (unlikely for now)
-              systemInstruction = { parts: [{ text: message.content[0].text }] };
-          }
-          return; // Skip adding system message to main contents
+      if (message.role === "system" && !systemInstruction) {
+        // Gemini expects system instruction as a separate object with a 'parts' array
+        if (typeof message.content === "string") {
+          systemInstruction = { parts: [{ text: message.content }] };
+        } else if (Array.isArray(message.content) && message.content.length > 0 && message.content[0].type === "text") {
+          // Handle potential array format if system prompt ever becomes multimodal (unlikely for now)
+          systemInstruction = { parts: [{ text: message.content[0].text }] };
+        }
+        return; // Skip adding system message to main contents
       }
 
       // Determine the API role ('user' or 'model')
-      const apiRole = message.role === 'assistant' ? 'model' : 'user';
+      const apiRole = message.role === "assistant" ? "model" : "user";
 
       // Start a new content block if the role changes
       if (apiRole !== currentRole && currentParts.length > 0) {
@@ -479,17 +483,17 @@ class GeminiProvider extends BaseProvider {
       currentRole = apiRole;
 
       // Process message content (text or multimodal)
-      if (typeof message.content === 'string') {
+      if (typeof message.content === "string") {
         currentParts.push({ text: message.content });
       } else if (Array.isArray(message.content)) {
         message.content.forEach(item => {
-          if (item.type === 'text') {
+          if (item.type === "text") {
             currentParts.push({ text: item.text });
-          } else if (item.type === 'image_url' && item.image_url?.url) {
+          } else if (item.type === "image_url" && item.image_url?.url) {
             const url = item.image_url.url;
             if (isBase64DataUrl(url)) {
-              const base64Data = url.split(',')[1];
-              const mimeType = url.match(/^data:(image\/[^;]+);base64,/)?.[1] || 'image/jpeg'; // Default to jpeg
+              const base64Data = url.split(",")[1];
+              const mimeType = url.match(/^data:(image\/[^;]+);base64,/)?.[1] || "image/jpeg"; // Default to jpeg
               currentParts.push({
                 inline_data: {
                   mime_type: mimeType,
@@ -515,16 +519,16 @@ class GeminiProvider extends BaseProvider {
 
     // Gemini requires alternating user/model roles, starting with user.
     // Add an empty user message if the first message isn't user.
-    if (contents.length > 0 && contents[0].role !== 'user') {
-        contents.unshift({ role: 'user', parts: [{ text: '' }] }); // Or a more meaningful placeholder
+    if (contents.length > 0 && contents[0].role !== "user") {
+      contents.unshift({ role: "user", parts: [{ text: "" }] }); // Or a more meaningful placeholder
     }
     // Ensure the last message is from the user role for the API call
-    if (contents.length > 0 && contents[contents.length - 1].role !== 'user') {
-       // This might happen if the last message was assistant. Often models expect a user prompt last.
-       // Depending on the use case, you might append an empty user message or handle differently.
-       logger.warn("Last message to Gemini is not from 'user'. API might behave unexpectedly.");
-       // Option: Append empty user message
-       // contents.push({ role: 'user', parts: [{ text: '' }] });
+    if (contents.length > 0 && contents[contents.length - 1].role !== "user") {
+      // This might happen if the last message was assistant. Often models expect a user prompt last.
+      // Depending on the use case, you might append an empty user message or handle differently.
+      logger.warn("Last message to Gemini is not from 'user'. API might behave unexpectedly.");
+      // Option: Append empty user message
+      // contents.push({ role: 'user', parts: [{ text: '' }] });
     }
 
 
@@ -537,7 +541,7 @@ class GeminiProvider extends BaseProvider {
   async _completionFallback(options, error) {
     logger.warn(`Executing Gemini fallback for model ${options.model} due to error: ${error.message}`);
     // Increment fallback metric
-    metrics.incrementProviderErrorCount(this.name, options.model, 'fallback');
+    metrics.incrementProviderErrorCount(this.name, options.model, "fallback");
 
     // Simple fallback: return an error message
     return {
@@ -613,8 +617,11 @@ class GeminiProvider extends BaseProvider {
         request.systemInstruction = systemInstruction;
       }
 
-      // Generate content stream using the Google AI SDK
-      const streamResult = await generativeModel.generateContentStream(request);
+      // Generate content stream using the Google AI SDK, propagating abortSignal
+      const streamResult = await generativeModel.generateContentStream(
+        request,
+        { signal: standardOptions.abortSignal }
+      );
 
       let firstChunk = true;
       let accumulatedLatency = 0;
@@ -637,13 +644,17 @@ class GeminiProvider extends BaseProvider {
       metrics.incrementProviderRequestCount(
         this.name,
         modelName,
-        'success'
+        "success"
       );
 
     } catch (error) {
       logger.error(`Gemini stream error: ${error.message}`, error);
       if (modelName) {
         metrics.incrementProviderErrorCount(this.name, modelName, error.status || 500);
+      }
+      // Rethrow abort errors silently
+      if (error.name === "AbortError") {
+        return;
       }
       throw new Error(`Gemini stream error: ${error.message}`);
     }

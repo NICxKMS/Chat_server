@@ -29,9 +29,9 @@ async function modelRoutes (fastify, options) {
 
   // GET /classified - Get models classified by external service
   fastify.get("/classified", (request, reply, done) => {
-    logger.debug('=========== MODEL CLASSIFIED ROUTE ===========');
+    logger.debug("=========== MODEL CLASSIFIED ROUTE ===========");
     logger.debug(`Request user: ${JSON.stringify(request.user)}`);
-    logger.debug(`Auth header: ${request.headers.authorization ? 'Present' : 'Not present'}`);
+    logger.debug(`Auth header: ${request.headers.authorization ? "Present" : "Not present"}`);
     
     // Continue to controller
     modelController.getClassifiedModels(request, reply);

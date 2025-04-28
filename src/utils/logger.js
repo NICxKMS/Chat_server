@@ -13,11 +13,11 @@ const logFormat = winston.format.printf(({ level, message, timestamp, ...meta })
 });
 
 // Determine log level based on environment
-const logLevel = process.env.NODE_ENV === 'production' 
-  ? 'warn' 
-  : process.env.NODE_ENV === 'development' 
-    ? 'debug' 
-    : 'info';
+const logLevel = process.env.NODE_ENV === "production" 
+  ? "warn" 
+  : process.env.NODE_ENV === "development" 
+    ? "debug" 
+    : "info";
 
 // Create the logger
 const logger = winston.createLogger({

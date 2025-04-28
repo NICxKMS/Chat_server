@@ -5,8 +5,8 @@
 import * as grpc from "@grpc/grpc-js";
 import providerFactory from "../providers/ProviderFactory.js";
 import protoUtils from "../utils/protoUtils.js";
-import chalk from "chalk";
-import * as fs from "fs";
+// import chalk from "chalk";
+// import * as fs from "fs";
 import logger from "../utils/logger.js";
 
 export class ModelClassificationService {
@@ -67,7 +67,7 @@ export class ModelClassificationService {
         defaultProviderName = defaultProvider?.name || "none";
         defaultModelName = defaultProvider?.config?.defaultModel || "";
       } catch (error) {
-        logger.warn(`Error getting default provider`, { error: error.message });
+        logger.warn("Error getting default provider", { error: error.message });
       }
       
       // Create LoadedModelList with proper types
@@ -77,7 +77,7 @@ export class ModelClassificationService {
         default_model: defaultModelName
       };
     } catch (error) {
-      logger.error(`Error in createProtoModelList`, { error: error.message });
+      logger.error("Error in createProtoModelList", { error: error.message });
       // Return empty model list on error
       return {
         models: [],
@@ -114,11 +114,11 @@ export class ModelClassificationService {
         // Call the gRPC service with retry logic
         const attemptClassify = (retryCount = 0, maxRetries = 3) => {
           // Write request body to file
-          try {
-            fs.writeFileSync('req.json', JSON.stringify(modelList, null, 2));
-          } catch (writeError) {
-            logger.error(`[Debug] Error writing request body to req.json`, { error: writeError.message });
-          }
+          // try {
+          //   fs.writeFileSync('req.json', JSON.stringify(modelList, null, 2));
+          // } catch (writeError) {
+          //   logger.error(`[Debug] Error writing request body to req.json`, { error: writeError.message });
+          // }
           this.client.classifyModels(modelList, (error, response) => {
             clearTimeout(timeout); // Clear timeout once callback is received
             
@@ -142,7 +142,7 @@ export class ModelClassificationService {
             } else {
               // Check if response is valid
               if (!response) {
-                logger.error('[gRPC Client] classifyModels received empty response, rejecting.');
+                logger.error("[gRPC Client] classifyModels received empty response, rejecting.");
                 reject(new Error("Received empty response from classification server"));
                 return;
               }
@@ -156,7 +156,7 @@ export class ModelClassificationService {
         attemptClassify();
       });
     } catch (error) {
-      logger.error(`Error in getClassifiedModels`, { error: error.message });
+      logger.error("Error in getClassifiedModels", { error: error.message });
       throw error;
     }
   }
@@ -187,11 +187,11 @@ export class ModelClassificationService {
         // Call the gRPC service with retry logic
         const attemptGetModelsByCriteria = (retryCount = 0, maxRetries = 2) => {
           // Write request body to file
-          try {
-            fs.writeFileSync('req_criteria.json', JSON.stringify(protoCriteria, null, 2));
-          } catch (writeError) {
-            logger.error(`[Debug] Error writing criteria request body to req_criteria.json`, { error: writeError.message });
-          }
+          // try {
+          //   fs.writeFileSync("req_criteria.json", JSON.stringify(protoCriteria, null, 2));
+          // } catch (writeError) {
+          //   logger.error("[Debug] Error writing criteria request body to req_criteria.json", { error: writeError.message });
+          // }
 
           this.client.getModelsByCriteria(protoCriteria, (error, response) => {
             clearTimeout(timeout); // Clear timeout once callback is received
@@ -215,7 +215,7 @@ export class ModelClassificationService {
               }
             } else {
               if (!response) {
-                logger.error('[gRPC Client] getModelsByCriteria received empty response, rejecting.');
+                logger.error("[gRPC Client] getModelsByCriteria received empty response, rejecting.");
                 reject(new Error("Received empty response from classification server (getModelsByCriteria)"));
                 return;
               }
@@ -229,7 +229,7 @@ export class ModelClassificationService {
         attemptGetModelsByCriteria();
       });
     } catch (error) {
-      logger.error(`Error in getModelsByCriteria`, { error: error.message });
+      logger.error("Error in getModelsByCriteria", { error: error.message });
       throw error;
     }
   }

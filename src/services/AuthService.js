@@ -18,7 +18,7 @@ class AuthService {
    */
   async verifyToken(token) {
     try {
-      if (!token) return null;
+      if (!token) {return null;}
       
       const decodedToken = await admin.auth().verifyIdToken(token);
       
@@ -74,7 +74,7 @@ class AuthService {
    * @returns {boolean} Whether the user has any of the required roles
    */
   hasRole(user, requiredRoles) {
-    if (!user || !user.roles) return false;
+    if (!user || !user.roles) {return false;}
     
     const userRoles = user.roles;
     

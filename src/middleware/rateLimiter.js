@@ -54,11 +54,11 @@ export default async function rateLimiterHook(request, reply) {
   } catch (rateLimiterRes) {
     // Catch the error thrown by rate-limiter-flexible when limit is exceeded
     if (rateLimiterRes instanceof Error) {
-        // Handle unexpected errors during rate limiting itself
-        logger.error("Unexpected error in rate limiter consumption:", rateLimiterRes);
-        // Decide if you want to let the request proceed or send a generic error
-        // For safety, maybe block the request
-        return reply.status(500).send({ error: "Internal Server Error", message: "Error during rate limit check." });
+      // Handle unexpected errors during rate limiting itself
+      logger.error("Unexpected error in rate limiter consumption:", rateLimiterRes);
+      // Decide if you want to let the request proceed or send a generic error
+      // For safety, maybe block the request
+      return reply.status(500).send({ error: "Internal Server Error", message: "Error during rate limit check." });
     }
 
     // If it's not an Error, it's the rejection object from rate-limiter-flexible

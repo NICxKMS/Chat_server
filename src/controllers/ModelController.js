@@ -10,7 +10,7 @@ import { getCircuitBreakerStates, createBreaker } from "../utils/circuitBreaker.
 import protoUtils from "../utils/protoUtils.js";
 import logger from "../utils/logger.js";
 import { applyCaching } from "./ModelControllerCache.js";
-import firestoreCacheService from '../services/FirestoreCacheService.js';
+import firestoreCacheService from "../services/FirestoreCacheService.js";
 
 class ModelController {
   constructor() {
@@ -24,18 +24,18 @@ class ModelController {
     this.getProviders = this.getProviders.bind(this);
 
     // Initialize classification service if enabled
-    this.useClassificationService = process.env.USE_CLASSIFICATION_SERVICE !== 'false';
+    this.useClassificationService = process.env.USE_CLASSIFICATION_SERVICE !== "false";
     
     if (this.useClassificationService) {
-      const serverAddress = `${process.env.CLASSIFICATION_SERVER_HOST || 'localhost'}:${process.env.CLASSIFICATION_SERVER_PORT || '8080'}`;
+      const serverAddress = `${process.env.CLASSIFICATION_SERVER_HOST || "localhost"}:${process.env.CLASSIFICATION_SERVER_PORT || "8080"}`;
       this.modelClassificationService = new ModelClassificationService(serverAddress);
       
       // Create circuit breakers for classification service calls
-      this.classifyBreaker = createBreaker('classification-classify', 
+      this.classifyBreaker = createBreaker("classification-classify", 
         (providersInfo) => this.modelClassificationService.getClassifiedModels(providersInfo), 
         { failureThreshold: 3, resetTimeout: 30000 } // Example options
       );
-      this.criteriaBreaker = createBreaker('classification-criteria', 
+      this.criteriaBreaker = createBreaker("classification-criteria", 
         (criteria) => this.modelClassificationService.getModelsByCriteria(criteria),
         { failureThreshold: 3, resetTimeout: 30000 } // Example options
       );
@@ -285,31 +285,31 @@ class ModelController {
       // Use cached results if available
       const cacheKey = "classifiedModels";
       const cachedData = await cache.getOrSet(cacheKey, async () => {
-          // Fetch fresh provider info (or use cached if appropriate elsewhere)
-          const providersInfo = await providerFactory.getProvidersInfo();
+        // Fetch fresh provider info (or use cached if appropriate elsewhere)
+        const providersInfo = await providerFactory.getProvidersInfo();
           
-          // Call the classification service via the circuit breaker
-          logger.debug("Calling classification service via circuit breaker...");
-          const classifiedModels = await this.classifyBreaker.fire(providersInfo);
-          logger.debug("Classification service call successful.");
+        // Call the classification service via the circuit breaker
+        logger.debug("Calling classification service via circuit breaker...");
+        const classifiedModels = await this.classifyBreaker.fire(providersInfo);
+        logger.debug("Classification service call successful.");
           
-          // Convert proto response to standard JS objects if necessary (assuming service returns proto)
-          // This depends on the service implementation. If it already converts, this is not needed.
-          // Example: return convertProtoResponse(classifiedModels);
-          return classifiedModels; // Assuming the service returns a usable format
+        // Convert proto response to standard JS objects if necessary (assuming service returns proto)
+        // This depends on the service implementation. If it already converts, this is not needed.
+        // Example: return convertProtoResponse(classifiedModels);
+        return classifiedModels; // Assuming the service returns a usable format
       });
       
       return reply.send(cachedData); // Send cached or freshly fetched data
       
     } catch (error) {
       logger.error(`Error getting classified models: ${error.message}`, { 
-          stack: error.stack, 
-          breaker_state: this.classifyBreaker?.state 
+        stack: error.stack, 
+        breaker_state: this.classifyBreaker?.state 
       });
       
       // Check if it's a circuit breaker error
-      if (error.name === 'BreakerOpenError') {
-          return reply.status(503).send({ error: "Model classification service is temporarily unavailable. Please try again later." });
+      if (error.name === "BreakerOpenError") {
+        return reply.status(503).send({ error: "Model classification service is temporarily unavailable. Please try again later." });
       } else {
         // Other errors (timeout from gRPC, internal service error, etc.)
         return reply.status(502).send({ error: "Failed to get classified models from the upstream service.", message: error.message });
@@ -333,33 +333,33 @@ class ModelController {
       metrics.incrementRequestCount();
       const criteria = request.body; // Assuming criteria are in the request body
 
-      if (!criteria || typeof criteria !== 'object' || Object.keys(criteria).length === 0) {
+      if (!criteria || typeof criteria !== "object" || Object.keys(criteria).length === 0) {
         return reply.status(400).send({ error: "Missing or invalid classification criteria in request body." });
       }
 
       // Use caching based on criteria
       const cacheKey = `classifiedModelsCriteria:${JSON.stringify(criteria)}`;
       const cachedData = await cache.getOrSet(cacheKey, async () => {
-          // Call the classification service via the circuit breaker
-          logger.debug("Calling classification service (criteria) via circuit breaker...");
-          const classifiedModels = await this.criteriaBreaker.fire(criteria);
-          logger.debug("Classification service call (criteria) successful.");
-          // Assuming the service returns a usable format
-          return classifiedModels; 
+        // Call the classification service via the circuit breaker
+        logger.debug("Calling classification service (criteria) via circuit breaker...");
+        const classifiedModels = await this.criteriaBreaker.fire(criteria);
+        logger.debug("Classification service call (criteria) successful.");
+        // Assuming the service returns a usable format
+        return classifiedModels; 
       });
 
       return reply.send(cachedData);
 
     } catch (error) {
       logger.error(`Error getting classified models with criteria: ${error.message}`, { 
-          stack: error.stack, 
-          criteria: request.body, 
-          breaker_state: this.criteriaBreaker?.state 
+        stack: error.stack, 
+        criteria: request.body, 
+        breaker_state: this.criteriaBreaker?.state 
       });
       
       // Check if it's a circuit breaker error
-      if (error.name === 'BreakerOpenError') {
-          return reply.status(503).send({ error: "Model classification service is temporarily unavailable. Please try again later." });
+      if (error.name === "BreakerOpenError") {
+        return reply.status(503).send({ error: "Model classification service is temporarily unavailable. Please try again later." });
       } else {
         // Other errors
         return reply.status(502).send({ error: "Failed to get classified models by criteria from the upstream service.", message: error.message });

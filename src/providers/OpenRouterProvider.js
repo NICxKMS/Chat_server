@@ -148,7 +148,7 @@ class OpenRouterProvider extends BaseProvider {
           logger.error(`Auth details: ${error.response.headers["x-clerk-auth-message"]}`);
         }
       } else if (status === 400) {
-        logger.error({ data }, `OpenRouter bad request (400)`);
+        logger.error({ data }, "OpenRouter bad request (400)");
       } else {
         logger.error(`${context}: ${error.message}`);
       }
@@ -203,12 +203,12 @@ class OpenRouterProvider extends BaseProvider {
       // If content is an array (multimodal)
       if (Array.isArray(message.content)) {
         const contentParts = message.content.map(item => {
-          if (item.type === 'text') {
-            return { type: 'text', text: item.text };
-          } else if (item.type === 'image_url' && item.image_url?.url) {
+          if (item.type === "text") {
+            return { type: "text", text: item.text };
+          } else if (item.type === "image_url" && item.image_url?.url) {
             // OpenRouter accepts image URLs directly (including base64 data URLs)
             // following the OpenAI format.
-            return { type: 'image_url', image_url: { url: item.image_url.url } };
+            return { type: "image_url", image_url: { url: item.image_url.url } };
           } else {
             logger.warn(`Unsupported content type in OpenRouter message: ${item.type}`);
             return null;
@@ -221,14 +221,14 @@ class OpenRouterProvider extends BaseProvider {
         };
       }
       // If content is just a string (text only)
-      else if (typeof message.content === 'string') {
+      else if (typeof message.content === "string") {
         return {
           role: message.role,
           content: message.content
         };
       } else {
-         logger.warn(`Message with unexpected content format skipped for OpenRouter:`, message);
-         return null;
+        logger.warn("Message with unexpected content format skipped for OpenRouter:", message);
+        return null;
       }
     }).filter(message => message !== null);
   }
@@ -259,7 +259,11 @@ class OpenRouterProvider extends BaseProvider {
       const startTime = Date.now();
       
       // Make the API request
-      const response = await this.client.post("/chat/completions", requestBody);
+      const response = await this.client.post(
+        "/chat/completions",
+        requestBody,
+        { signal: options.abortSignal }
+      );
       
       // Calculate latency
       const latency = Date.now() - startTime;
@@ -381,7 +385,7 @@ class OpenRouterProvider extends BaseProvider {
       // Clean up function to ensure stream is properly destroyed
       const cleanupStream = () => {
         ended = true;
-        if (stream && !stream.destroyed && typeof stream.destroy === 'function') {
+        if (stream && !stream.destroyed && typeof stream.destroy === "function") {
           try {
             stream.destroy();
           } catch (e) {
@@ -392,12 +396,12 @@ class OpenRouterProvider extends BaseProvider {
 
       // Handle abort signal if provided
       if (standardOptions.abortSignal instanceof AbortSignal) {
-        standardOptions.abortSignal.addEventListener('abort', cleanupStream, { once: true });
+        standardOptions.abortSignal.addEventListener("abort", cleanupStream, { once: true });
       }
 
       try {
         for await (const chunk of stream) {
-          if (ended) break; // Check if stream was aborted
+          if (ended) {break;} // Check if stream was aborted
           buffer += chunk.toString(); // Append chunk to buffer
 
           // Process complete messages in the buffer
@@ -472,7 +476,7 @@ class OpenRouterProvider extends BaseProvider {
       } finally {
         // Clean up the abort signal listener if it was added
         if (standardOptions.abortSignal instanceof AbortSignal) {
-          standardOptions.abortSignal.removeEventListener('abort', cleanupStream);
+          standardOptions.abortSignal.removeEventListener("abort", cleanupStream);
         }
         
         // Always ensure the stream is properly destroyed

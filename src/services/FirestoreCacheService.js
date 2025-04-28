@@ -2,11 +2,11 @@
  * Firestore Cache Service
  * Provides a caching layer using Firestore for storing and retrieving protobuf data
  */
-import admin from 'firebase-admin';
-import crypto from 'crypto';
-import logger from '../utils/logger.js';
-import { promisify } from 'util';
-import zlib from 'zlib';
+import admin from "firebase-admin";
+import crypto from "crypto";
+import logger from "../utils/logger.js";
+import { promisify } from "util";
+import zlib from "zlib";
 
 // Promisify zlib functions
 const gzipAsync = promisify(zlib.gzip);
@@ -17,8 +17,8 @@ class FirestoreCacheService {
     // Don't initialize Firestore immediately - wait until first use
     this._db = null;
     this._collection = null;
-    this.enabled = process.env.FIRESTORE_CACHE_ENABLED !== 'false';
-    this.ttlSeconds = parseInt(process.env.FIRESTORE_CACHE_TTL || '3600', 10); // Default 1 hour
+    this.enabled = process.env.FIRESTORE_CACHE_ENABLED !== "false";
+    this.ttlSeconds = parseInt(process.env.FIRESTORE_CACHE_TTL || "3600", 10); // Default 1 hour
     this.useCompression = true; // Enable compression by default
     this.initialized = false;
     
@@ -31,14 +31,14 @@ class FirestoreCacheService {
    */
   initialize() {
     try {
-      if (this.initialized) return true;
+      if (this.initialized) {return true;}
 
       // Check if Firebase Admin is initialized
       try {
         this._db = admin.firestore();
-        this._collection = this._db.collection('microservice-cache');
+        this._collection = this._db.collection("microservice-cache");
         this.initialized = true;
-        logger.info('FirestoreCacheService successfully initialized Firestore connection');
+        logger.info("FirestoreCacheService successfully initialized Firestore connection");
         return true;
       } catch (error) {
         logger.error(`Failed to initialize Firestore: ${error.message}`);
@@ -58,8 +58,8 @@ class FirestoreCacheService {
    * @returns {FirebaseFirestore.CollectionReference|null} Firestore collection or null if unavailable
    */
   get collection() {
-    if (!this.enabled) return null;
-    if (!this.initialized) this.initialize();
+    if (!this.enabled) {return null;}
+    if (!this.initialized) {this.initialize();}
     return this._collection;
   }
 
@@ -68,8 +68,8 @@ class FirestoreCacheService {
    * @returns {FirebaseFirestore.Firestore|null} Firestore instance or null if unavailable
    */
   get db() {
-    if (!this.enabled) return null;
-    if (!this.initialized) this.initialize();
+    if (!this.enabled) {return null;}
+    if (!this.initialized) {this.initialize();}
     return this._db;
   }
 
@@ -88,13 +88,13 @@ class FirestoreCacheService {
    */
   async compressData(data) {
     try {
-      if (!data) return null;
+      if (!data) {return null;}
       
       // Convert object to string if needed
-      const dataString = typeof data === 'object' ? JSON.stringify(data) : String(data);
+      const dataString = typeof data === "object" ? JSON.stringify(data) : String(data);
       
       // Compress data using gzip
-      return await gzipAsync(Buffer.from(dataString, 'utf8'));
+      return await gzipAsync(Buffer.from(dataString, "utf8"));
     } catch (error) {
       logger.error(`Error compressing data: ${error.message}`);
       throw error;
@@ -108,11 +108,11 @@ class FirestoreCacheService {
    */
   async decompressData(compressedData) {
     try {
-      if (!compressedData) return null;
+      if (!compressedData) {return null;}
       
       // Decompress data
       const decompressedBuffer = await gunzipAsync(compressedData);
-      const dataString = decompressedBuffer.toString('utf8');
+      const dataString = decompressedBuffer.toString("utf8");
       
       // Try to parse as JSON, fall back to string if not valid JSON
       try {
@@ -132,12 +132,12 @@ class FirestoreCacheService {
    * @returns {string} SHA-256 hash of the data
    */
   calculateHash(data) {
-    if (!data) return '';
+    if (!data) {return "";}
     
     // Convert object to string if needed
-    const dataString = typeof data === 'object' ? JSON.stringify(data) : String(data);
+    const dataString = typeof data === "object" ? JSON.stringify(data) : String(data);
     
-    return crypto.createHash('sha256').update(dataString).digest('hex');
+    return crypto.createHash("sha256").update(dataString).digest("hex");
   }
 
   /**
@@ -147,7 +147,7 @@ class FirestoreCacheService {
    * @returns {Promise<{data: object, hash: string, timestamp: Date}|null>} Cached data or null if not found/expired
    */
   async get(userId, cacheKey) {
-    if (!this.isEnabled()) return null;
+    if (!this.isEnabled()) {return null;}
     
     try {
       const docId = `${userId}:${cacheKey}`;
@@ -180,7 +180,7 @@ class FirestoreCacheService {
       let decompressedData = null;
       if (compressedData) {
         // Handle data based on how it was stored (Base64 string)
-        const buffer = Buffer.from(compressedData, 'base64');
+        const buffer = Buffer.from(compressedData, "base64");
         decompressedData = await this.decompressData(buffer);
       }
       
@@ -204,7 +204,7 @@ class FirestoreCacheService {
    * @returns {Promise<boolean>} Whether the operation was successful
    */
   async set(userId, cacheKey, data, customTtl) {
-    if (!this.isEnabled() || !data) return false;
+    if (!this.isEnabled() || !data) {return false;}
     
     try {
       const docId = `${userId}:${cacheKey}`;
@@ -224,7 +224,7 @@ class FirestoreCacheService {
 
       // Store compressed data as base64 string instead of using Blob
       // This avoids issues with admin.firestore.Blob potentially being undefined
-      const base64Data = compressedData.toString('base64');
+      const base64Data = compressedData.toString("base64");
       
       await this.collection.doc(docId).set({
         userId,
@@ -254,7 +254,7 @@ class FirestoreCacheService {
    * @returns {Promise<boolean>} Whether an update was performed
    */
   async updateIfChanged(userId, cacheKey, data, currentHash) {
-    if (!this.isEnabled() || !data) return false;
+    if (!this.isEnabled() || !data) {return false;}
 
     try {
       const newHash = this.calculateHash(data);
@@ -282,7 +282,7 @@ class FirestoreCacheService {
    * @returns {Promise<boolean>} Whether the operation was successful
    */
   async invalidate(userId, cacheKey) {
-    if (!this.isEnabled()) return false;
+    if (!this.isEnabled()) {return false;}
     
     try {
       const docId = `${userId}:${cacheKey}`;
@@ -301,11 +301,11 @@ class FirestoreCacheService {
    * @returns {Promise<number>} Number of deleted entries
    */
   async clearUserCache(userId) {
-    if (!this.isEnabled()) return 0;
+    if (!this.isEnabled()) {return 0;}
     
     try {
       const batch = this.db.batch();
-      const snapshot = await this.collection.where('userId', '==', userId).get();
+      const snapshot = await this.collection.where("userId", "==", userId).get();
       
       if (snapshot.empty) {
         return 0;

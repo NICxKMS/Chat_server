@@ -32,7 +32,7 @@ coverage/
 build/
 Release/
 *.tsbuildinfo
-
+dist/
 # Dependency directories
 bower_components/
 jspm_packages/
@@ -77,4 +77,3 @@ temp/
 # Miscellaneous
 .lock-wscript
 .grunt
-req.json

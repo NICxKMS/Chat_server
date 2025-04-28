@@ -35,8 +35,8 @@ export default function fastifyErrorHandler(error, request, reply) {
   // Determine HTTP status code
   // Prioritize Fastify validation errors, then explicit status codes, then mapped names/codes
   let statusCode = error.validation ? 400 :                  // Fastify validation error
-                   reply.statusCode >= 400 ? reply.statusCode : // Status code already set on reply
-                   error.statusCode || error.status ||           // Explicit status code on error object
+    reply.statusCode >= 400 ? reply.statusCode : // Status code already set on reply
+      error.statusCode || error.status ||           // Explicit status code on error object
                    ERROR_STATUS_MAP[error.code] ||            // Map error codes (e.g., FST_ERR_VALIDATION)
                    ERROR_STATUS_MAP[error.name] ||            // Map custom error names
                    500;                                       // Default to 500
@@ -47,18 +47,18 @@ export default function fastifyErrorHandler(error, request, reply) {
   let errorCode = error.code || error.name || "InternalServerError";
 
   if (error.validation) {
-      statusCode = 400; // Ensure 400 for validation
-      errorName = "ValidationError";
-      errorCode = "FST_ERR_VALIDATION"; // Use Fastify's code
-      validationDetails = error.validation.map(v => ({
-          field: v.instancePath.substring(1) || 'request', // Clean up path, default to 'request'
-          message: v.message
-      }));
+    statusCode = 400; // Ensure 400 for validation
+    errorName = "ValidationError";
+    errorCode = "FST_ERR_VALIDATION"; // Use Fastify's code
+    validationDetails = error.validation.map(v => ({
+      field: v.instancePath.substring(1) || "request", // Clean up path, default to 'request'
+      message: v.message
+    }));
   } else {
     // Use mapped code if found, otherwise keep original/name
-     errorCode = ERROR_STATUS_MAP[error.code] ? error.code : 
-                 ERROR_STATUS_MAP[error.name] ? error.name : 
-                 errorCode; // Fallback
+    errorCode = ERROR_STATUS_MAP[error.code] ? error.code : 
+      ERROR_STATUS_MAP[error.name] ? error.name : 
+        errorCode; // Fallback
   }
 
   // Log the error details

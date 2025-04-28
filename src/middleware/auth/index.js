@@ -24,8 +24,8 @@ export function authenticateUser() {
     request.user = null;
     const authHeader = request.headers.authorization;
     
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const idToken = authHeader.split('Bearer ')[1];
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const idToken = authHeader.split("Bearer ")[1];
       try {
         // Verify token asynchronously
         request.user = await authService.verifyToken(idToken);
@@ -39,7 +39,7 @@ export function authenticateUser() {
         // Still continue processing the request with request.user as null
       }
     } else {
-      logger.debug('No auth token provided, proceeding as anonymous.');
+      logger.debug("No auth token provided, proceeding as anonymous.");
     }
   };
 }
@@ -54,8 +54,8 @@ export function requireAuth() {
     request.user = null;
     const authHeader = request.headers.authorization;
     
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      logger.debug('Authentication required but no token provided');
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      logger.debug("Authentication required but no token provided");
       reply.status(401).send({ 
         error: "Authentication required", 
         message: "You must provide a valid authentication token" 
@@ -63,12 +63,12 @@ export function requireAuth() {
       return reply;
     }
     
-    const idToken = authHeader.split('Bearer ')[1];
+    const idToken = authHeader.split("Bearer ")[1];
     try {
       request.user = await authService.verifyToken(idToken);
       
       if (!request.user) {
-        logger.debug('Authentication failed - token verification returned null');
+        logger.debug("Authentication failed - token verification returned null");
         reply.status(401).send({ 
           error: "Authentication failed", 
           message: "Invalid or expired authentication token" 
@@ -101,7 +101,7 @@ export function requireRole(roles) {
     await authMiddleware(request, reply);
     
     // If authentication failed and reply was already sent, exit
-    if (reply.sent) return reply;
+    if (reply.sent) {return reply;}
     
     // Then check roles
     const hasRequiredRole = authService.hasRole(request.user, roles);

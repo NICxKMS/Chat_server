@@ -2,8 +2,8 @@
  * Model Controller Cache Integration
  * Provides caching for model classification data from the microservice
  */
-import firestoreCacheService from '../services/FirestoreCacheService.js';
-import logger from '../utils/logger.js';
+import firestoreCacheService from "../services/FirestoreCacheService.js";
+import logger from "../utils/logger.js";
 
 // Track background tasks for debugging
 let backgroundTasksInProgress = 0;
@@ -42,12 +42,12 @@ function runInBackground(operation, operationName) {
 export function withCache(originalMethod, modelController) {
   return async function wrappedGetClassifiedModels(request, reply) {
     // Get user ID for cache key - use anonymous for unauthenticated users
-    const userId = request.user?.uid || 'anonymous';
-    const cacheKey = 'classified-models'; // Single data type/format as specified
+    const userId = request.user?.uid || "anonymous";
+    const cacheKey = "classified-models"; // Single data type/format as specified
     
     // Check if Firestore caching is enabled
     if (!firestoreCacheService.isEnabled()) {
-      logger.debug('Firestore cache disabled, calling original method directly');
+      logger.debug("Firestore cache disabled, calling original method directly");
       return originalMethod.call(modelController, request, reply);
     }
 
@@ -83,7 +83,7 @@ export function withCache(originalMethod, modelController) {
               cachedData.hash
             );
           }
-        }, 'refresh-cache');
+        }, "refresh-cache");
         
         return;
       }
@@ -104,7 +104,7 @@ export function withCache(originalMethod, modelController) {
         if (payload) {
           runInBackground(async () => {
             await firestoreCacheService.set(userId, cacheKey, payload);
-          }, 'set-cache');
+          }, "set-cache");
         }
         
         return result;
@@ -133,7 +133,7 @@ export function applyCaching(controller) {
   // Replace with cached version
   controller.getClassifiedModels = withCache(originalGetClassifiedModels, controller);
   
-  logger.info('Applied Firestore caching to ModelController.getClassifiedModels');
+  logger.info("Applied Firestore caching to ModelController.getClassifiedModels");
   return controller;
 }
 
