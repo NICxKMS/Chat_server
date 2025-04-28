@@ -6,6 +6,19 @@
 import modelController from "../controllers/ModelController.js";
 import logger from "../utils/logger.js";
 
+// JSON schema for classification criteria (request body)
+const classifyCriteriaSchema = {
+  type: "object",
+  minProperties: 1,
+  additionalProperties: { type: ["string", "number", "boolean", "object", "array"] }
+};
+// JSON schema for providerName param
+const providerParamsSchema = {
+  type: "object",
+  required: ["providerName"],
+  properties: { providerName: { type: "string" } }
+};
+
 // Fastify Plugin function
 async function modelRoutes (fastify, options) {
 
@@ -37,13 +50,18 @@ async function modelRoutes (fastify, options) {
     modelController.getClassifiedModels(request, reply);
   });
 
-  // GET /classified/criteria - Get models classified with specific criteria
-  // Uses request.query internally in the controller
-  fastify.get("/classified/criteria", modelController.getClassifiedModelsWithCriteria);
+  // GET /classified/criteria - validation for classification criteria
+  fastify.get(
+    "/classified/criteria",
+    modelController.getClassifiedModelsWithCriteria
+  );
 
   // GET /:providerName - Get models for a specific provider (must be last)
-  // Uses request.params.providerName internally in the controller
-  fastify.get("/:providerName", modelController.getProviderModels);
+  fastify.get(
+    "/:providerName",
+    { schema: { params: providerParamsSchema } },
+    modelController.getProviderModels
+  );
 
 }
 

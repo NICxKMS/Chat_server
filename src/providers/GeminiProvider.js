@@ -3,16 +3,12 @@
  * Integrates with Google's Generative AI SDK for Gemini models
  */
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import axios from "axios";
 import BaseProvider from "./BaseProvider.js";
-import { createBreaker } from "../utils/circuitBreaker.js";
 import * as metrics from "../utils/metrics.js";
 // Import the specific histogram instance
 import { responseTimeHistogram } from "../utils/metrics.js";
 import logger from "../utils/logger.js";
-
-// Helper to check if a string is a base64 data URL
-const isBase64DataUrl = (str) => /^data:image\/(?:jpeg|png|gif|webp);base64,/.test(str);
+import { isBase64DataUrl } from "../utils/base64.js";
 
 class GeminiProvider extends BaseProvider {
   /**
@@ -48,17 +44,21 @@ class GeminiProvider extends BaseProvider {
       lastUpdated: new Date().toISOString()
     };
     
-    // Set up circuit breaker for API calls
-    this.completionBreaker = createBreaker(`${this.name}-completion`, 
-      (options) => this._rawChatCompletion(options),
-      {
-        failureThreshold: 3,
-        resetTimeout: 30000
-      }
+    // Set up circuit breaker for API calls using BaseProvider helper
+    this.completionBreaker = this.registerBreaker(
+      "completion",
+      "_rawChatCompletion",
+      { failureThreshold: 3, resetTimeout: 30000 }
     );
     
     // Initialize with config models
     this.availableModels = this.config.models || [];
+    
+    // Configure HTTP client for dynamic model loading
+    this.httpClient = this.createClient({
+      baseURL: `https://generativelanguage.googleapis.com/${this.apiVersion}`,
+      headers: { "Content-Type": "application/json" }
+    });
     
     // Log initialization
   }
@@ -79,19 +79,11 @@ class GeminiProvider extends BaseProvider {
       // Dynamically fetch models if enabled
       if (this.config.dynamicModelLoading) {
         try {
-          // Use Axios to directly call the models endpoint
-          // The SDK doesn't expose a models listing method yet
-          const apiKey = this.config.apiKey;
-          const baseUrl = `https://generativelanguage.googleapis.com/${this.apiVersion}`;
-          
-          const response = await axios.get(`${baseUrl}/models`, {
-            headers: {
-              "Content-Type": "application/json"
-            },
-            params: {
-              key: apiKey
-            }
-          });
+          // Use httpClient to directly call the models endpoint
+          const response = await this.httpClient.get(
+            "/models", 
+            { params: { key: this.config.apiKey } }
+          );
           
           // Extract model IDs from response
           if (response.data && response.data.models) {
@@ -230,11 +222,11 @@ class GeminiProvider extends BaseProvider {
         return this.availableModels; // Return cached models if no valid API key
       }
 
-      // Directly use Axios to call the models API
-      const apiKey = this.config.apiKey;
-      const response = await axios.get(`https://generativelanguage.googleapis.com/${this.apiVersion}/models`, {
-        params: { key: apiKey }
-      });
+      // Directly use httpClient to call the models API
+      const response = await this.httpClient.get(
+        "/models", 
+        { params: { key: this.config.apiKey } }
+      );
 
       // Process response
       if (response.data && response.data.models) {
@@ -293,48 +285,14 @@ class GeminiProvider extends BaseProvider {
         };
       }
 
-      // Start timer for latency measurement
-      const startTime = Date.now();
-
-      // Send request with circuit breaker
-      const response = await this.completionBreaker.fire(options);
-      const latency = Date.now() - startTime;
-      
-      // Record successful request metrics
-      responseTimeHistogram.observe(latency / 1000);
-      metrics.incrementProviderRequestCount(this.name, options.model, "success");
-      
-      return response;
+      // Send request through circuit breaker
+      return await this.completionBreaker.fire(options);
     } catch (error) {
       // Handle errors with fallback mechanism
       logger.error(`Gemini chat completion error: ${error.message}`);
-      metrics.incrementProviderErrorCount(this.name, options.model || this.config.defaultModel, error.status || 500);
       
-      try {
-        return await this._completionFallback(options, error);
-      } catch (fallbackError) {
-        logger.error(`Fallback also failed: ${fallbackError.message}`);
-        return {
-          id: `error-${Date.now()}`,
-          model: options.model || this.config.defaultModel || "gemini-1.5-pro",
-          provider: this.name,
-          createdAt: new Date().toISOString(),
-          content: "",
-          usage: {
-            promptTokens: this._estimateTokens(options.messages.map(m => m.content).join(" ")),
-            completionTokens: 40, // Approximate for the fallback message
-            totalTokens: this._estimateTokens(options.messages.map(m => m.content).join(" ")) + 40
-          },
-          latency: 0,
-          finishReason: "fallback",
-          errorDetails: {
-            message: error.message,
-            type: "provider_error",
-            param: null,
-            code: "ECONNRESET"
-          }
-        };
-      }
+      // Delegate to fallback implementation
+      return await this._completionFallback(options, error);
     }
   }
 
@@ -567,97 +525,40 @@ class GeminiProvider extends BaseProvider {
   }
 
   /**
-   * Send a chat completion request with streaming response using the Google AI SDK.
+   * Send a chat completion request with streaming response using the BaseProvider streamWrapper.
    * Implements the `chatCompletionStream` method defined in `BaseProvider`.
-   * @param {object} options - The request options (model, messages, etc.), standardized.
-   * @yields {object} Standardized response chunks compatible with the API format.
-   * @throws {Error} If the API key is missing, the API request fails, or the stream encounters an error.
    */
   async *chatCompletionStream(options) {
-    const startTime = process.hrtime();
-    let modelName;
-    try {
-      if (!this.hasValidApiKey) {
-        throw new Error("Gemini provider requires a valid API key for streaming.");
-      }
+    // Delegate to BaseProvider.streamWrapper
+    yield* this.streamWrapper(this._rawChatCompletionStream, options, this._normalizeStreamChunk);
+  }
 
-      // Standardize and validate options
-      const standardOptions = this.standardizeOptions(options);
-      this.validateOptions(standardOptions); // Use BaseProvider validation
-
-      // Extract model name (remove provider prefix if present)
-      modelName = standardOptions.model.includes("/")
-        ? standardOptions.model.split("/")[1]
-        : standardOptions.model;
-
-      // Select the correct generative model
-      const generativeModel = this.genAI.getGenerativeModel({ model: modelName });
-
-      // Prepare messages and system prompt using the corrected method
-      const { contents, systemInstruction } = this._processMessages(standardOptions.messages);
-
-      // Validate that formattedContents is an array before proceeding
-      if (!Array.isArray(contents)) {
-        throw new Error("_processMessages did not return a valid formattedContents array.");
-      }
-
-      // Prepare request body (messages, generationConfig)
-      const request = {
-        contents: contents,
-        generationConfig: {
-          temperature: standardOptions.temperature,
-          maxOutputTokens: standardOptions.max_tokens,
-          stopSequences: standardOptions.stop
-        },
-        safetySettings: standardOptions.safety_settings || []
-      };
-
-      // Add system instruction if a system prompt exists
-      if (systemInstruction) {
-        request.systemInstruction = systemInstruction;
-      }
-
-      // Generate content stream using the Google AI SDK, propagating abortSignal
-      const streamResult = await generativeModel.generateContentStream(
-        request,
-        { signal: standardOptions.abortSignal }
-      );
-
-      let firstChunk = true;
-      let accumulatedLatency = 0;
-
-      // Iterate through the stream response chunks
-      for await (const chunk of streamResult.stream) {
-        if (firstChunk) {
-          const duration = process.hrtime(startTime);
-          accumulatedLatency = (duration[0] * 1000) + (duration[1] / 1000000);
-          metrics.recordStreamTtfb(this.name, modelName, accumulatedLatency / 1000);
-          firstChunk = false;
-        }
-
-        // Normalize the Gemini chunk and yield it
-        const normalizedChunk = this._normalizeStreamChunk(chunk, modelName, accumulatedLatency);
-        yield normalizedChunk;
-      }
-
-      // Record successful stream completion
-      metrics.incrementProviderRequestCount(
-        this.name,
-        modelName,
-        "success"
-      );
-
-    } catch (error) {
-      logger.error(`Gemini stream error: ${error.message}`, error);
-      if (modelName) {
-        metrics.incrementProviderErrorCount(this.name, modelName, error.status || 500);
-      }
-      // Rethrow abort errors silently
-      if (error.name === "AbortError") {
-        return;
-      }
-      throw new Error(`Gemini stream error: ${error.message}`);
+  /**
+   * Raw generator for Gemini streaming using Google AI SDK.
+   * @param {object} options - Standardized options.
+   * @returns {AsyncIterable} Raw stream iterable.
+   */
+  async _rawChatCompletionStream(options) {
+    if (!this.hasValidApiKey) {
+      throw new Error("Gemini provider requires a valid API key for streaming.");
     }
+    const generativeModel = this.genAI.getGenerativeModel({ model: options.model });
+    const { contents, systemInstruction } = this._processMessages(options.messages);
+    // Prepare request body (messages, generationConfig)
+    const request = {
+      contents,
+      generationConfig: {
+        temperature: options.temperature,
+        maxOutputTokens: options.max_tokens,
+        stopSequences: options.stop
+      },
+      safetySettings: options.safety_settings || []
+    };
+    if (systemInstruction) {
+      request.systemInstruction = systemInstruction;
+    }
+    const streamResult = await generativeModel.generateContentStream(request, { signal: options.abortSignal });
+    return streamResult.stream;
   }
 
   /**

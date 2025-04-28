@@ -3,6 +3,11 @@
  * Defines the interface that all AI provider implementations must follow
  */
 
+import { createBreaker } from "../utils/circuitBreaker.js";
+import * as metrics from "../utils/metrics.js";
+import { responseTimeHistogram } from "../utils/metrics.js";
+import { createHttpClient } from "../utils/httpClient.js";
+
 class BaseProvider {
   /**
    * Create a new provider
@@ -18,6 +23,41 @@ class BaseProvider {
       version: "v1",
       lastUpdated: new Date().toISOString()
     };
+    // Store registered breakers
+    this._breakers = {};
+  }
+
+  /**
+   * Register a circuit breaker for a provider method.
+   * @param {string} key - Suffix for breaker name (e.g., 'completion').
+   * @param {string} methodName - Name of the method to wrap.
+   * @param {object} options - Circuit breaker options.
+   * @returns {object} The created circuit breaker instance.
+   */
+  registerBreaker(key, methodName, options) {
+    const breakerName = `${this.name}-${key}`;
+    // Bind the provider method
+    const rawMethod = this[methodName].bind(this);
+    // Wrap the method to record metrics
+    const wrappedMethod = async (params) => {
+      const start = Date.now();
+      try {
+        const result = await rawMethod(params);
+        const latency = Date.now() - start;
+        // Record response time and success count
+        responseTimeHistogram.labels(this.name, params.model || "unknown", "200").observe(latency / 1000);
+        metrics.incrementProviderRequestCount(this.name, params.model || "unknown", "success");
+        return result;
+      } catch (error) {
+        const status = error.status || error.code || "error";
+        metrics.incrementProviderErrorCount(this.name, params.model || "unknown", String(status));
+        throw error;
+      }
+    };
+    // Create breaker with wrapped method
+    const breaker = createBreaker(breakerName, wrappedMethod, options);
+    this._breakers[key] = breaker;
+    return breaker;
   }
 
   /**
@@ -133,6 +173,66 @@ class BaseProvider {
         throw new Error(`Message at index ${index} must have role and content properties`);
       }
     });
+  }
+
+  /**
+   * Create a configured HTTP client for providers.
+   * @param {object} options - Configuration for HTTP client.
+   * @param {string} options.baseURL - Base URL for API calls.
+   * @param {object} [options.headers] - Default headers.
+   * @param {number} [options.timeout] - Request timeout in ms.
+   * @param {number} [options.maxRetries] - Retry attempts for network errors.
+   * @returns {AxiosInstance} Configured HTTP client.
+   */
+  createClient({ baseURL, headers = {}, timeout, maxRetries }) {
+    return createHttpClient({
+      baseURL,
+      headers,
+      timeout: timeout ?? this.config.timeout,
+      maxRetries: maxRetries ?? this.config.maxRetries
+    });
+  }
+
+  /**
+   * Generic streaming wrapper to handle TTFB, duration, and error metrics.
+   * @param {Function} rawFn - async function returning an async iterable (raw stream) taking standardized options.
+   * @param {object} options - The raw options for streaming.
+   * @param {Function} normalizeFn - Function to normalize each raw chunk to standardized format.
+   * @yields {object} Standardized stream chunks.
+   */
+  async *streamWrapper(rawFn, options, normalizeFn) {
+    // Standardize and validate options
+    const standardOptions = this.standardizeOptions(options);
+    this.validateOptions(standardOptions);
+    const model = standardOptions.model;
+    // High-resolution timer start
+    const hrStart = process.hrtime();
+    let firstChunk = true;
+    let ttfbMs = 0;
+    try {
+      // Obtain raw stream
+      const stream = await rawFn.call(this, standardOptions);
+      for await (const chunk of stream) {
+        if (firstChunk) {
+          const diff = process.hrtime(hrStart);
+          ttfbMs = diff[0] * 1000 + diff[1] / 1e6;
+          metrics.recordStreamTtfb(this.name, model, ttfbMs / 1000);
+          firstChunk = false;
+        }
+        // Yield normalized chunk
+        yield normalizeFn.call(this, chunk, model, ttfbMs);
+      }
+      // Record successful stream request
+      metrics.incrementProviderRequestCount(this.name, model, "success");
+    } catch (error) {
+      // Record stream error
+      metrics.incrementStreamErrorCount(this.name, model, error.status || "error");
+      throw error;
+    } finally {
+      const diff = process.hrtime(hrStart);
+      const totalSeconds = diff[0] + diff[1] / 1e9;
+      metrics.recordStreamDuration(this.name, model, totalSeconds);
+    }
   }
 }
 

@@ -3,7 +3,6 @@
  * Handles all model-related API endpoints
  */
 import providerFactory from "../providers/ProviderFactory.js";
-import * as cache from "../utils/cache.js";
 import * as metrics from "../utils/metrics.js";
 import { ModelClassificationService } from "../services/ModelClassificationService.js";
 import { getCircuitBreakerStates, createBreaker } from "../utils/circuitBreaker.js";
@@ -275,32 +274,18 @@ class ModelController {
     // Ensure service is enabled and initialized
     if (!this.useClassificationService || !this.modelClassificationService) {
       logger.warn("Attempted to call getClassifiedModels when service is disabled/unavailable.");
-      // Return fallback or error. For now, return 501 Not Implemented
       return reply.status(501).send({ error: "Model classification service is not enabled." });
     }
     
     try {
+      // Record request in metrics
       metrics.incrementRequestCount();
-      
-      // Use cached results if available
-      const cacheKey = "classifiedModels";
-      const cachedData = await cache.getOrSet(cacheKey, async () => {
-        // Fetch fresh provider info (or use cached if appropriate elsewhere)
-        const providersInfo = await providerFactory.getProvidersInfo();
-          
-        // Call the classification service via the circuit breaker
-        logger.debug("Calling classification service via circuit breaker...");
-        const classifiedModels = await this.classifyBreaker.fire(providersInfo);
-        logger.debug("Classification service call successful.");
-          
-        // Convert proto response to standard JS objects if necessary (assuming service returns proto)
-        // This depends on the service implementation. If it already converts, this is not needed.
-        // Example: return convertProtoResponse(classifiedModels);
-        return classifiedModels; // Assuming the service returns a usable format
-      });
-      
-      return reply.send(cachedData); // Send cached or freshly fetched data
-      
+
+      // Fetch classification data directly via circuit breaker
+      const providersInfo = await providerFactory.getProvidersInfo();
+      logger.debug("Calling classification service via circuit breaker...");
+      const classifiedModels = await this.classifyBreaker.fire(providersInfo);
+      return reply.send(classifiedModels);
     } catch (error) {
       logger.error(`Error getting classified models: ${error.message}`, { 
         stack: error.stack, 
@@ -330,6 +315,7 @@ class ModelController {
     }
 
     try {
+      // Record request in metrics
       metrics.incrementRequestCount();
       const criteria = request.body; // Assuming criteria are in the request body
 
@@ -337,19 +323,10 @@ class ModelController {
         return reply.status(400).send({ error: "Missing or invalid classification criteria in request body." });
       }
 
-      // Use caching based on criteria
-      const cacheKey = `classifiedModelsCriteria:${JSON.stringify(criteria)}`;
-      const cachedData = await cache.getOrSet(cacheKey, async () => {
-        // Call the classification service via the circuit breaker
-        logger.debug("Calling classification service (criteria) via circuit breaker...");
-        const classifiedModels = await this.criteriaBreaker.fire(criteria);
-        logger.debug("Classification service call (criteria) successful.");
-        // Assuming the service returns a usable format
-        return classifiedModels; 
-      });
-
-      return reply.send(cachedData);
-
+      // Fetch classification data by criteria directly
+      logger.debug("Calling classification service (criteria) via circuit breaker...");
+      const classifiedModels = await this.criteriaBreaker.fire(criteria);
+      return reply.send(classifiedModels);
     } catch (error) {
       logger.error(`Error getting classified models with criteria: ${error.message}`, { 
         stack: error.stack, 

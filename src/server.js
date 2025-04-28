@@ -4,20 +4,19 @@
  */
 import dotenv from "dotenv";
 import Fastify from "fastify";
+import autoload from "@fastify/autoload";
+import path from "path";
+import { fileURLToPath } from "url";
 
-import fastifyCors from "@fastify/cors"; // Added
-import fastifyHelmet from "@fastify/helmet"; // Added
-import fastifyCompress from "@fastify/compress"; // Added
-import mainApiRoutes from "./routes/index.js"; // Main plugin
-
+// import mainApiRoutes from "./routes/index.js"; // Main plugin (autoloaded below)
 import fastifyErrorHandler from "./middleware/errorHandler.js"; // Added error handler import
 import rateLimiterHook from "./middleware/rateLimiter.js"; // Hook import
 import { authenticateUser } from "./middleware/auth/index.js"; // New auth middleware
 import config from "./config/config.js";
 import admin from "firebase-admin"; // Added Firebase Admin
 import logger from "./utils/logger.js"; // Import logger
-import { isEnabled as isCacheEnabled } from "./utils/cache.js"; // Import specific function
 import { bodyLimit as chatBodyLimit } from "./controllers/ChatController.js"; // Import bodyLimit
+import fastifyCors from "@fastify/cors"; // Import CORS directly
 
 // Load environment variables from .env file
 dotenv.config({ override: false }); // Load .env but don't override existing env vars
@@ -94,77 +93,32 @@ async function firebaseAuthHook(request, reply) {
 // Start the server (using async/await)
 const start = async () => {
   try {
-    // Register essential plugins
+    // Register CORS first, before any other plugins or routes
     await fastify.register(fastifyCors, {
-      // origin: 'http://localhost:3001', // Temporarily commented out
-      // origin: process.env.NODE_ENV === 'production' ? false : ['http://localhost:3001', 'http://localhost:3000','http://192.168.1.100:3001', 'http://localhost:3002','*'], // OLD CORS logic
-      origin: (origin, cb) => {
-        const allowedOrigins = [
-          "http://localhost:3000",
-          "https://chat-api-9ru.pages.dev",
-          "https://nicxkms.github.io/chat-api/",
-          "https://nicxkms.github.io"
-        ];
-        // const allowedPattern = /\\.chat-api-9ru\\.pages\\.dev$/; // Regex for allowed Cloudflare Pages domain - Replaced with suffix check
-        const allowedDomainPrefix = "nicxkms.github.io";
-        const allowedDomainSuffix = ".chat-api-9ru.pages.dev"; // Allow any subdomain of this
-
-        if (process.env.NODE_ENV !== "production") {
-          // Allow common dev origins and wildcard in non-production
-          const devOrigins = ["http://localhost:3001", "http://localhost:3000","http://192.168.1.100:3001", "http://localhost:3002"];
-          if (!origin || devOrigins.includes(origin) || origin.includes("localhost")) { // Allow requests with no origin (like curl) and common dev hosts
-            cb(null, true);
-            return;
-          }
-          // For non-production, you might still want to allow the production pattern or be more permissive
-          // Example: allow anything if not production
-          cb(null, true); // Allow everything in non-prod for simplicity here
-          return;
-        } else {
-          // Production CORS logic
-          if (!origin) { // Allow requests with no origin (like curl, server-to-server)
-            cb(null, true);
-            return;
-          }
-
-          try {
-            const originUrl = new URL(origin);
-            // Check if the origin is in the explicit list OR if its hostname ends with the allowed suffix
-            if (allowedOrigins.includes(origin) || originUrl.hostname.endsWith(allowedDomainSuffix) || originUrl.hostname.startsWith(allowedDomainPrefix)) {
-              cb(null, true); // Allow the origin
-            } else {
-              logger.warn(`CORS denied for origin: ${origin}`);
-              cb(new Error("Not allowed by CORS"), false); // Deny the origin
-            }
-          } catch (e) {
-            // Handle invalid origin format if necessary
-            logger.warn(`Invalid origin format received: ${origin}, denying CORS. Error: ${e.message}`);
-            cb(new Error("Invalid Origin Header"), false);
-          }
-        }
-      },
+      origin: true, // Allow all origins in development
+      credentials: true,
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
       allowedHeaders: [
         "Content-Type",
-        "Authorization",
+        "Authorization", 
         "Accept",
         "Cache-Control",
         "Connection",
         "X-Requested-With",
         "Range"
       ],
-      exposedHeaders: ["Content-Length", "Content-Range", "Content-Encoding"],
-      credentials: true,
-      maxAge: 86400 // 24 hours
+      exposedHeaders: ["Content-Length", "Content-Range", "Content-Encoding"]
     });
-    await fastify.register(fastifyHelmet, {
-      // TODO: Review Helmet options for production.
-      // Disabling CSP/COEP might be insecure.
-      // Consider default policies or configuring them properly.
-      contentSecurityPolicy: false,
-      crossOriginEmbedderPolicy: false
+    logger.info("CORS plugin registered directly in server.js");
+
+    // Auto-load all plugins (cors, helmet, compress, etc.) from /plugins
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    await fastify.register(autoload, {
+      dir: path.join(__dirname, "plugins"),
+      // Skip loading cors.js since we're registering it directly
+      ignorePattern: /cors\.js$/
     });
-    await fastify.register(fastifyCompress);
 
     // Add Rate Limiter Hook
     if (config.rateLimiting?.enabled !== false) {
@@ -182,14 +136,14 @@ const start = async () => {
     fastify.addHook("onRequest", authenticateUser());
 
     // --- Register Route Plugins ---
-    // Health check endpoints (can also be moved into a plugin)
-    fastify.get("/health", (request, reply) => {
-      reply.status(200).send({ status: "OK", version: config.version });
-    });
+    // Health check endpoint provided by healthPlugin
 
-    // Register main API plugin
-    await fastify.register(mainApiRoutes, {
-      prefix: "/api"
+    // Auto-load all route plugins from /routes under /api
+    await fastify.register(autoload, {
+      dir: path.join(__dirname, "routes"),
+      options: { prefix: "/api" },
+      // index.js and infoRoutes.js only; chatRoutes and modelRoutes are registered via index.js
+      ignorePattern: /(?:chatRoutes|modelRoutes)\.js$/
     });
 
     // --- Register Error Handler ---
@@ -198,9 +152,6 @@ const start = async () => {
     // --- Start Server ---
     await fastify.listen({ port: PORT, host: "0.0.0.0" });
     // Logger automatically logs listen address
-
-    // Determine Base Path from Environment Variable
-    logger.info(`Cache enabled: ${isCacheEnabled()}`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
