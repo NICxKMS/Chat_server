@@ -65,9 +65,9 @@ const start = async () => {
         const allowedOrigins = [
           "http://localhost:3000",
           "https://chat-api-9ru.pages.dev",
-          "https://nicxkms.github.io/chat-api/",
+          "https://nicxkms.github.io/chat-api",
           "https://nicxkms.github.io",
-          "https://chat-8fh.pages.dev/"
+          "https://chat-8fh.pages.dev"
         ];
         // const allowedPattern = /\\.chat-api-9ru\\.pages\\.dev$/; // Regex for allowed Cloudflare Pages domain - Replaced with suffix check
         const allowedDomainPrefix = "nicxkms.github.io";
