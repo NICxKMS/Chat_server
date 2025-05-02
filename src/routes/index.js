@@ -11,7 +11,7 @@ import chatRoutesPlugin from "./chatRoutes.js";
 import logger from "../utils/logger.js";
 
 // Fastify Plugin function
-async function mainApiRoutes (fastify, options) {
+async function mainApiRoutes (fastify) {
 
   // Status endpoint for API health check
   fastify.get("/status", (request, reply) => {
@@ -26,7 +26,7 @@ async function mainApiRoutes (fastify, options) {
     // Reading package.json version might require different import methods depending on Node version/setup
     // Using process.env is often simpler if available
     reply.send({
-      version: process.env.npm_package_version || "1.0.0", 
+      version: process.env.npm_package_version || "1.7.0", 
       apiVersion: "v1",
       timestamp: new Date().toISOString()
     });

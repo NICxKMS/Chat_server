@@ -6,6 +6,7 @@ import path from "path";
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 import { fileURLToPath } from "url";
+import logger from "./logger.js";
 
 // Get current file's directory in ES module context
 const __filename = fileURLToPath(import.meta.url);
@@ -70,8 +71,8 @@ export function createLoadedModelList(modelList = [], defaultProvider = "", defa
       default_model: defaultModel
     };
   } catch (error) {
-    console.error(`Error creating LoadedModelList: ${error.message}`);
-    console.error(`Stack: ${error.stack}`);
+    logger.error(`Error creating LoadedModelList: ${error.message}`, error);
+    logger.error(`Stack: ${error.stack}`, error);
     throw error;
   }
 }
@@ -109,8 +110,8 @@ export function createProtoModel(model) {
       metadata: convertMetadataToStringMap(model.metadata || {})
     };
   } catch (error) {
-    console.error(`Error creating Model proto: ${error.message}`);
-    console.error(`Stack: ${error.stack}`);
+    logger.error(`Error creating Model proto: ${error.message}`, error);
+    logger.error(`Stack: ${error.stack}`, error);
     throw error;
   }
 }
@@ -149,7 +150,7 @@ export function convertToProtoModel(model) {
  */
 export function convertFromProtoModel(protoModel) {
   if (!protoModel) {
-    console.warn("Received undefined or null protoModel in convertFromProtoModel");
+    logger.warn("Received undefined or null protoModel in convertFromProtoModel");
     return {};
   }
   
@@ -207,8 +208,8 @@ export function createClassificationCriteria(options = {}) {
       min_context_size: Number(options.minContextSize) || 0
     };
   } catch (error) {
-    console.error(`Error creating ClassificationCriteria: ${error.message}`);
-    console.error(`Stack: ${error.stack}`);
+    logger.error(`Error creating ClassificationCriteria: ${error.message}`, error);
+    logger.error(`Stack: ${error.stack}`, error);
     throw error;
   }
 }

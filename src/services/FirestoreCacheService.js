@@ -117,7 +117,7 @@ class FirestoreCacheService {
       // Try to parse as JSON, fall back to string if not valid JSON
       try {
         return JSON.parse(dataString);
-      } catch (e) {
+      } catch {
         return dataString;
       }
     } catch (error) {

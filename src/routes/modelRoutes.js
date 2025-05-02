@@ -6,21 +6,8 @@
 import modelController from "../controllers/ModelController.js";
 import logger from "../utils/logger.js";
 
-// JSON schema for classification criteria (request body)
-const classifyCriteriaSchema = {
-  type: "object",
-  minProperties: 1,
-  additionalProperties: { type: ["string", "number", "boolean", "object", "array"] }
-};
-// JSON schema for providerName param
-const providerParamsSchema = {
-  type: "object",
-  required: ["providerName"],
-  properties: { providerName: { type: "string" } }
-};
-
 // Fastify Plugin function
-async function modelRoutes (fastify, options) {
+async function modelRoutes (fastify) {
 
   // GET / - Get all models from all providers
   fastify.get("/", modelController.getAllModels);
@@ -41,7 +28,7 @@ async function modelRoutes (fastify, options) {
   // router.get('/capabilities/all', modelController.getProviderCapabilities.bind(modelController));
 
   // GET /classified - Get models classified by external service
-  fastify.get("/classified", (request, reply, done) => {
+  fastify.get("/classified", (request, reply) => {
     logger.debug("=========== MODEL CLASSIFIED ROUTE ===========");
     logger.debug(`Request user: ${JSON.stringify(request.user)}`);
     logger.debug(`Auth header: ${request.headers.authorization ? "Present" : "Not present"}`);
@@ -50,18 +37,13 @@ async function modelRoutes (fastify, options) {
     modelController.getClassifiedModels(request, reply);
   });
 
-  // GET /classified/criteria - validation for classification criteria
-  fastify.get(
-    "/classified/criteria",
-    modelController.getClassifiedModelsWithCriteria
-  );
+  // GET /classified/criteria - Get models classified with specific criteria
+  // Uses request.query internally in the controller
+  fastify.get("/classified/criteria", modelController.getClassifiedModelsWithCriteria);
 
   // GET /:providerName - Get models for a specific provider (must be last)
-  fastify.get(
-    "/:providerName",
-    { schema: { params: providerParamsSchema } },
-    modelController.getProviderModels
-  );
+  // Uses request.params.providerName internally in the controller
+  fastify.get("/:providerName", modelController.getProviderModels);
 
 }
 

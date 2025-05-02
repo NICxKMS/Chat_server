@@ -5,8 +5,6 @@
 import * as grpc from "@grpc/grpc-js";
 import providerFactory from "../providers/ProviderFactory.js";
 import protoUtils from "../utils/protoUtils.js";
-// import chalk from "chalk";
-// import * as fs from "fs";
 import logger from "../utils/logger.js";
 
 export class ModelClassificationService {
@@ -186,20 +184,12 @@ export class ModelClassificationService {
         
         // Call the gRPC service with retry logic
         const attemptGetModelsByCriteria = (retryCount = 0, maxRetries = 2) => {
-          // Write request body to file
-          // try {
-          //   fs.writeFileSync("req_criteria.json", JSON.stringify(protoCriteria, null, 2));
-          // } catch (writeError) {
-          //   logger.error("[Debug] Error writing criteria request body to req_criteria.json", { error: writeError.message });
-          // }
 
           this.client.getModelsByCriteria(protoCriteria, (error, response) => {
             clearTimeout(timeout); // Clear timeout once callback is received
             
             if (error) {
-              // Handle gRPC errors
-              logger.error(`[gRPC Client] getModelsByCriteria Error (Attempt ${retryCount + 1}/${maxRetries + 1})`, { code: error.code, details: error.details || error.message });
-              
+              // Handle gRPC errors              
               // Check if the error is retryable
               const isRetryable = error.code === grpc.status.UNAVAILABLE || 
                                   error.code === grpc.status.DEADLINE_EXCEEDED;

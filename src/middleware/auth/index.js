@@ -19,7 +19,7 @@ const authStats = {
  * @returns {Function} Fastify middleware function
  */
 export function authenticateUser() {
-  return async (request, reply) => {
+  return async (request) => {
     authStats.totalRequests++;
     request.user = null;
     const authHeader = request.headers.authorization;

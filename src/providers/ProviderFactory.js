@@ -2,12 +2,12 @@
  * Provider Factory
  * Creates and initializes provider instances based on configuration
  */
-import BaseProvider from "./BaseProvider.js";
 import OpenAIProvider from "./OpenAIProvider.js";
 import { AnthropicProvider } from "./AnthropicProvider.js";
 import GeminiProvider from "./GeminiProvider.js";
 import OpenRouterProvider from "./OpenRouterProvider.js";
 import config from "../config/config.js";
+import logger from "../utils/logger.js";
 
 /**
  * Provider Factory Class
@@ -34,11 +34,11 @@ class ProviderFactory {
         this.defaultProvider = "openrouter";
       } else {
         this.defaultProvider = availableProviders[0] || "none";
-        console.warn(`No primary providers found, using ${this.defaultProvider} as default`);
+        logger.warn(`No primary providers found, using ${this.defaultProvider} as default`);
       }
       
     } catch (error) {
-      console.error("Error initializing provider factory:", error);
+      logger.error("Error initializing provider factory:", error);
       // Initialize with empty providers if there's an error
       this.providers = { 
         none: {
@@ -197,7 +197,7 @@ class ProviderFactory {
       }
 
       if (Object.keys(providers).length === 0) {
-        console.warn("No providers were initialized due to missing API keys");
+        logger.warn("No providers were initialized due to missing API keys");
         providers.none = {
           name: "none",
           getModels: async () => [],
@@ -207,7 +207,7 @@ class ProviderFactory {
 
       return providers;
     } catch (error) {
-      console.error("Error initializing providers:", error);
+      logger.error("Error initializing providers:", error);
       throw error;
     }
   }

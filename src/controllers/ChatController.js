@@ -3,13 +3,12 @@
  * Handles all chat-related API endpoints with optimized performance
  */
 import providerFactory from "../providers/ProviderFactory.js";
+import * as cache from "../utils/cache.js";
 import * as metrics from "../utils/metrics.js";
 import { getCircuitBreakerStates } from "../utils/circuitBreaker.js";
 import logger from "../utils/logger.js";
-import { mapProviderError } from "../utils/errorMapper.js";
 
 // Helper function to roughly validate base64 (more robust checks might be needed)
-const isPotentialBase64 = (str) => typeof str === "string" && /^[A-Za-z0-9+/=]+$/.test(str) && str.length % 4 === 0;
 
 // Increased payload size limit for image data
 export const bodyLimit = 10 * 1024 * 1024; // 10MB
@@ -38,7 +37,6 @@ class ChatController {
    * @param {FastifyReply} reply - Fastify reply object.
    */
   async chatCompletion(request, reply) {
-    const startTime = Date.now();
     let providerName, modelName; // Declare here for potential use in error logging
     // Create an AbortController and derive requestId (client-supplied wins)
     let abortController = new AbortController();
@@ -49,7 +47,7 @@ class ChatController {
       metrics.incrementRequestCount();
       
       // Use request.body - add extraction of top_p, frequency_penalty, and presence_penalty
-      const { model, messages, temperature = 0.7, max_tokens = 1000, top_p, frequency_penalty, presence_penalty } = request.body;
+      const { model, messages, temperature = 0.7, max_tokens = 1000, top_p, frequency_penalty, presence_penalty, nocache } = request.body;
       
       if (!model) {
         return reply.status(400).send({ error: "Missing required parameter: model" });
@@ -87,6 +85,30 @@ class ChatController {
       // Echo the requestId back for consistency
       reply.header("X-Request-ID", requestId);
       
+      // Cache check logic 
+      try {
+        if (typeof cache.isEnabled === "function" && cache.isEnabled() && !nocache) {
+          try {
+            const cacheKeyData = { provider: providerName, model: modelName, messages, temperature, max_tokens };
+            const cacheKey = cache.generateKey(cacheKeyData);
+            const cachedResponse = await cache.get(cacheKey);
+            if (cachedResponse) {
+              logger.info(`Cache hit for ${providerName}/${modelName}`);
+              cachedResponse.cached = true;
+              
+              // Remove from active generations since we're using cached response
+              activeGenerations.delete(requestId);
+              
+              return reply.send(cachedResponse); // Use reply.send
+            }
+          } catch (cacheError) {
+            logger.warn(`Cache error: ${cacheError.message}. Continuing without cache.`);
+          }
+        }
+      } catch (cacheCheckError) {
+        logger.warn(`Failed to check cache status: ${cacheCheckError.message}. Continuing without cache.`);
+      }
+      
       // Prepare options - include optional parameters only if they exist
       const options = {
         model: modelName,
@@ -102,15 +124,29 @@ class ChatController {
       if (presence_penalty !== undefined) {options.presence_penalty = parseFloat(presence_penalty);}
       
       try {
-        // Send request to provider
+        // Send request to provider (unchanged)
         const response = await provider.chatCompletion(options);
         
         // Remove from active generations after completion
         activeGenerations.delete(requestId);
         
-        // Log and return response
-        logger.debug("Provider response for chatCompletion", { response });
-        return reply.send(response);
+        // Cache set logic 
+        try {
+          if (typeof cache.isEnabled === "function" && cache.isEnabled() && !nocache) {
+            try {
+              const cacheKeyData = { provider: providerName, model: modelName, messages, temperature, max_tokens };
+              const cacheKey = cache.generateKey(cacheKeyData);
+              await cache.set(cacheKey, response);
+            } catch (cacheError) {
+              logger.warn(`Failed to cache response: ${cacheError.message}`);
+            }
+          }
+        } catch (cacheCheckError) {
+          logger.warn(`Failed to check cache status: ${cacheCheckError.message}`);
+        }
+        
+        // Return the response using reply.send
+        return reply.send(response); // Explicit return
 
       } catch (providerError) {
         // Remove from active generations on error
@@ -125,11 +161,39 @@ class ChatController {
           });
         }
         
-        logger.error("Provider error in chatCompletion", { provider: providerName, model: modelName, error: providerError });
+        logger.error(`Provider error in chatCompletion: ${providerError.message}`, { provider: providerName, model: modelName, stack: providerError.stack });
 
-        // Map provider error to standardized HTTP error and rethrow
-        const mappedError = mapProviderError(providerError, providerName, modelName);
-        throw mappedError;
+        // TODO: Review error handling strategy.
+        // Consider throwing specific custom error types from providers/services
+        // and centralizing status code mapping and response formatting solely
+        // within the fastifyErrorHandler.
+        let mappedError = providerError; 
+        if (providerError.message) { 
+          if (/authentication|api key|invalid_request_error.*api_key/i.test(providerError.message)) {
+            mappedError = new Error(`Authentication failed with provider ${providerName}. Check your API key.`);
+            mappedError.status = 401;
+            mappedError.name = "AuthenticationError";
+          } else if (/rate limit|quota exceeded/i.test(providerError.message)) {
+            mappedError = new Error(`Rate limit exceeded for provider ${providerName}.`);
+            mappedError.status = 429;
+            mappedError.name = "RateLimitError";
+          } else if (/model not found|deployment does not exist/i.test(providerError.message)) {
+            mappedError = new Error(`Model '${modelName}' not found or unavailable for provider ${providerName}.`);
+            mappedError.status = 404;
+            mappedError.name = "NotFoundError";
+          } else if (providerError.response?.status && providerError.response.status >= 400 && providerError.response.status < 500) {
+            mappedError = new Error(`Provider ${providerName} returned client error ${providerError.response.status}: ${providerError.message}`);
+            mappedError.status = providerError.response.status;
+            mappedError.name = "ProviderClientError";
+          } else {
+            mappedError = new Error(`Provider ${providerName} encountered an error: ${providerError.message}`);
+            mappedError.status = 502;
+            mappedError.name = "ProviderError";
+          }
+        }
+        
+        // Throw error instead of calling next()
+        throw mappedError; 
 
       }
     } catch (error) {
@@ -138,7 +202,26 @@ class ChatController {
       
       // Catch errors from validation, provider setup, caching, or thrown provider errors
       logger.error(`Server error in chatCompletion handler: ${error.message}`, { provider: providerName, model: modelName, stack: error.stack });
-      // Throw error to be handled by Fastify's central error handler
+      
+      // Send error response as HTTP 200 with an `error` field to avoid fetch network error
+      if (!reply.sent) {
+        const errorPayload = {
+          id: requestId,
+          model: modelName,
+          provider: providerName,
+          error: {
+            message: error.message || "An unexpected error occurred.",
+            code: error.status || error.statusCode || 500,
+            type: error.code || error.name || "ServerError"
+          },
+          finishReason: "error",
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          latency: null
+        };
+        return reply.status(200).send(errorPayload);
+      }
+
+      // Throw error to be handled by Fastify's central error handler if already sent
       throw error; 
     }
     
@@ -315,8 +398,7 @@ class ChatController {
       const providerStream = provider.chatCompletionStream(options);
       // Optimized stream processing with immediate chunk writing
       for await (const chunk of providerStream) {
-        lastProviderChunk = chunk;
-        logger.debug("Streaming chunk", { chunk });
+        lastProviderChunk = chunk; // Store the latest chunk
         if (streamClosed) { break; }
         lastActivityTime = Date.now(); 
         chunkCounter++;
@@ -469,24 +551,37 @@ class ChatController {
     try {
       metrics.incrementRequestCount();
       
-      const providersInfo = await providerFactory.getProvidersInfo();
       const circuitBreakerStates = getCircuitBreakerStates();
+      
+      let cacheStats = { enabled: false };
+      try {
+        if (typeof cache.getStats === "function") {
+          const stats = cache.getStats();
+          cacheStats = { ...stats, enabled: true };
+        }
+      } catch (cacheError) {
+        logger.warn(`Failed to get cache stats: ${cacheError.message}`);
+        cacheStats = { enabled: false, error: cacheError.message };
+      }
       
       const capabilities = await providerFactory.getAllProviderCapabilities();
       
+      // Add return here
       return reply.send({
         capabilities: capabilities,
         defaultProvider: providerFactory.getProvider().name,
         circuitBreakers: circuitBreakerStates,
+        cacheStats: cacheStats,
         systemStatus: {
           uptime: process.uptime(),
           memory: process.memoryUsage(),
           timestamp: new Date().toISOString()
         }
-      });
+      }); // Explicit return
     } catch (error) {
       logger.error(`Error getting chat capabilities: ${error.message}`, { stack: error.stack });
-      throw error;
+      // Throw error for Fastify's handler
+      throw error; 
     }
   }
 }

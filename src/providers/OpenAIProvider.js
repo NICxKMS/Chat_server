@@ -4,9 +4,10 @@
  */
 import { OpenAI } from "openai";
 import BaseProvider from "./BaseProvider.js";
+import { createBreaker } from "../utils/circuitBreaker.js";
 import * as metrics from "../utils/metrics.js";
 import logger from "../utils/logger.js";
-import { parseBase64DataUrl } from "../utils/base64.js";
+
 
 class OpenAIProvider extends BaseProvider {
   constructor(config) {
@@ -28,10 +29,12 @@ class OpenAIProvider extends BaseProvider {
     };
     
     // Set up circuit breaker for API calls
-    this.completionBreaker = this.registerBreaker(
-      "completion",
-      "_rawChatCompletion",
-      { failureThreshold: 3, resetTimeout: 30000 }
+    this.completionBreaker = createBreaker(`${this.name}-completion`, 
+      (options) => this._rawChatCompletion(options),
+      {
+        failureThreshold: 3,
+        resetTimeout: 30000
+      }
     );
     
     // Initialize with fallback models if specified in config
@@ -236,8 +239,24 @@ class OpenAIProvider extends BaseProvider {
       // Use circuit breaker for API calls
       const response = await this.completionBreaker.fire(apiOptions);
       
+      // Record successful API call
+      metrics.incrementProviderRequestCount(
+        this.name,
+        modelName,
+        "200"
+      );
+      
       return response;
     } catch (error) {
+      // logger.error(`OpenAI API error: ${error.message}`); // REMOVED this line
+      
+      // Record failed API call
+      metrics.incrementProviderRequestCount(
+        this.name,
+        options.model?.includes("/") ? options.model.split("/")[1] : options.model,
+        "error"
+      );
+      
       throw error;
     }
   }
@@ -314,8 +333,9 @@ class OpenAIProvider extends BaseProvider {
       ...(options.response_format?.type === "json_object" && { response_format: { type: "json_object" } })
     };
 
+    let startTime;
     try {
-      const startTime = Date.now();
+      startTime = Date.now();
       // logger.debug({ openAIPayload: payload }, "Sending request to OpenAI");
 
       const response = await this.client.chat.completions.create(
@@ -323,13 +343,12 @@ class OpenAIProvider extends BaseProvider {
         { signal: options.abortSignal }
       );
 
-      const latency = Date.now() - startTime;
+      const latency = startTime ? Date.now() - startTime : 0;
       logger.debug("Received response from OpenAI");
 
       // Normalize the response
       return this._normalizeResponse(response, modelName, latency);
     } catch (error) {
-      const latency = Date.now() - startTime; // Record latency even on error
       logger.error(`OpenAI raw completion error: ${error.message}`, { model: modelName, error });
       // Enhance error handling: Check for specific OpenAI error types/codes
       let statusCode = 500;
@@ -349,7 +368,7 @@ class OpenAIProvider extends BaseProvider {
    */
   _normalizeResponse(response, model, latency) {
     const choice = response.choices?.[0];
-    const usage = response.raw.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    const usage = response.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
     return {
       id: response.id,
@@ -378,38 +397,144 @@ class OpenAIProvider extends BaseProvider {
    * @throws {Error} If API error occurs.
    */
   async *chatCompletionStream(options) {
-    yield* this.streamWrapper(this._rawChatCompletionStream, options, this._normalizeStreamChunk);
-  }
+    let modelName;
+    let streamStartTime;
+    try {
+      // Standardize and validate options
+      const standardOptions = this.standardizeOptions(options);
+      this.validateOptions(standardOptions);
 
-  /**
-   * Raw streaming generator for OpenAI SDK stream.
-   */
-  async *_rawChatCompletionStream(options) {
-    const standardOptions = this.standardizeOptions(options);
-    this.validateOptions(standardOptions);
-    const modelName = standardOptions.model.includes("/")
-      ? standardOptions.model.split("/")[1]
-      : standardOptions.model;
-    const processedMessages = this._processMessagesForOpenAI(standardOptions.messages);
-    const payload = {
-      model: modelName,
-      messages: processedMessages,
-      temperature: standardOptions.temperature,
-      max_completion_tokens: standardOptions.max_tokens,
-      stream_options: { include_usage: true },
-      stream: true,
-      ...(standardOptions.top_p !== undefined && { top_p: standardOptions.top_p }),
-      ...(standardOptions.frequency_penalty !== undefined && { frequency_penalty: standardOptions.frequency_penalty }),
-      ...(standardOptions.presence_penalty !== undefined && { presence_penalty: standardOptions.presence_penalty }),
-      ...(standardOptions.stop && { stop: standardOptions.stop }),
-      ...(standardOptions.response_format?.type === "json_object" && { response_format: { type: "json_object" } })
-    };
-    const stream = await this.client.chat.completions.create(
-      payload,
-      { signal: standardOptions.abortSignal }
-    );
-    for await (const chunk of stream) {
-      yield chunk;
+      // Extract model name
+      modelName = standardOptions.model.includes("/")
+        ? standardOptions.model.split("/")[1]
+        : standardOptions.model;
+
+      // Process messages for potential multimodal content
+      const processedMessages = this._processMessagesForOpenAI(standardOptions.messages);
+
+      // Prepare the payload for streaming
+      const payload = {
+        model: modelName,
+        messages: processedMessages,
+        temperature: standardOptions.temperature,
+        max_completion_tokens: standardOptions.max_tokens,
+        stream_options: { include_usage: true },
+        stream: true,
+        // Include other optional parameters
+        ...(standardOptions.top_p !== undefined && { top_p: standardOptions.top_p }),
+        ...(standardOptions.frequency_penalty !== undefined && { frequency_penalty: standardOptions.frequency_penalty }),
+        ...(standardOptions.presence_penalty !== undefined && { presence_penalty: standardOptions.presence_penalty }),
+        ...(standardOptions.stop && { stop: standardOptions.stop }),
+        ...(standardOptions.response_format?.type === "json_object" && { response_format: { type: "json_object" } })
+      };
+
+      // logger.debug({ openAIStreamPayload: payload }, "Sending stream request to OpenAI");
+      streamStartTime = Date.now();
+
+      // Use the OpenAI SDK's streaming method
+      const stream = await this.client.chat.completions.create(
+        payload,
+        { signal: standardOptions.abortSignal }
+      );
+
+      let firstChunk = true;
+      let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }; // Initialize usage
+      let finishReason = "unknown"; // Initialize finish reason
+      let finalChunkProcessed = false;
+
+      for await (const chunk of stream) {
+        const chunkLatency = firstChunk ? Date.now() - streamStartTime : 0;
+
+        if (firstChunk) {
+          // Convert latency to seconds for the metrics function
+          metrics.recordStreamTtfb(this.name, modelName, chunkLatency / 1000); 
+          firstChunk = false;
+        }
+
+        // Extract usage and finish reason if available in the chunk
+        // OpenAI stream chunks typically contain delta content, but the final chunk might have full usage/finish_reason.
+        // Sometimes usage/finish reason might be on the `.x_stream_final_response.usage` or similar experimental fields.
+
+        // Prioritize final response data if available (check varies by SDK version)
+        const finalResponse = chunk.x_stream_final_response; // Example check
+        if (finalResponse) {
+          if (finalResponse.usage) {
+            usage = { // Update with final accurate usage
+              promptTokens: finalResponse.usage.prompt_tokens || usage.promptTokens,
+              completionTokens: finalResponse.usage.completion_tokens || usage.completionTokens,
+              totalTokens: finalResponse.usage.total_tokens || usage.totalTokens
+            };
+          }
+          if (finalResponse.choices && finalResponse.choices[0]?.finish_reason) {
+            finishReason = finalResponse.choices[0].finish_reason;
+          }
+          finalChunkProcessed = true; // Mark that we got the final meta-data chunk
+        } else {
+          // For regular delta chunks, update based on the chunk data itself
+          const choice = chunk.choices?.[0];
+          if (choice?.finish_reason) {
+            finishReason = choice.finish_reason; // Update finish reason if present in a delta
+          }
+          // Usage might be harder to accumulate accurately from deltas alone
+          // We often rely on the final chunk or estimate based on content length.
+        }
+
+
+        const normalizedChunk = this._normalizeStreamChunk(chunk, modelName, chunkLatency, finishReason, usage);
+        if (normalizedChunk.content || normalizedChunk.finishReason !== "unknown" || normalizedChunk.toolCalls) { // Yield if there is content, tool calls, or a finish reason update
+          yield normalizedChunk;
+        }
+
+      }
+
+      logger.info(`OpenAI stream completed for model ${modelName}. Finish Reason: ${finishReason}`);
+      // If the final metadata wasn't processed via an x_stream_final_response chunk,
+      // send one last meta-chunk if the finish reason is known.
+      if (!finalChunkProcessed && finishReason !== "unknown") {
+        yield {
+          id: `openai-final-${Date.now()}`,
+          model: modelName,
+          provider: this.name,
+          createdAt: new Date().toISOString(),
+          content: null,
+          usage: usage, // Send last known usage
+          latency: 0,
+          finishReason: finishReason,
+          raw: null
+        };
+      }
+
+
+    } catch (error) {
+      const streamLatency = streamStartTime ? Date.now() - streamStartTime : 0;
+      logger.error(`OpenAI stream error: ${error.message}`, { model: modelName, error });
+      let statusCode = 500;
+      if (error.status) {
+        statusCode = error.status;
+      }
+      metrics.incrementStreamErrorCount(this.name, modelName, statusCode.toString());
+
+      // Yield a final error chunk
+      yield {
+        id: `openai-stream-error-${Date.now()}`,
+        model: modelName,
+        provider: this.name,
+        error: {
+          message: `OpenAI stream error: ${error.message}`,
+          code: statusCode,
+          type: error.name || "ProviderStreamError"
+        },
+        finishReason: "error",
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        latency: streamLatency
+      };
+      // throw error; // Option to rethrow
+
+    } finally {
+      if (streamStartTime) {
+        const durationSeconds = (Date.now() - streamStartTime) / 1000;
+        metrics.recordStreamDuration(this.name, modelName, durationSeconds);
+      }
     }
   }
 
@@ -425,12 +550,6 @@ class OpenAIProvider extends BaseProvider {
   _normalizeStreamChunk(chunk, model, latency, finishReason, usage) {
     const choice = chunk.choices?.[0];
     const delta = choice?.delta;
-    // Normalize raw usage to camelCase fields for streaming
-    const normalizedUsage = {
-      promptTokens: chunk.usage?.prompt_tokens ?? 0,
-      completionTokens: chunk.usage?.completion_tokens ?? 0,
-      totalTokens: chunk.usage?.total_tokens ?? 0
-    };
 
     return {
       id: chunk.id,
@@ -441,7 +560,7 @@ class OpenAIProvider extends BaseProvider {
       content: delta?.content || null,
       // Include tool calls delta if present
       toolCalls: delta?.tool_calls || null,
-      usage: normalizedUsage, // Send normalized token usage for streaming
+      usage: usage, // Send current state of usage
       latency: latency, // Only relevant for first chunk (TTFB)
       finishReason: finishReason, // Send current state of finish reason
       raw: chunk // Include the raw chunk for potential downstream use

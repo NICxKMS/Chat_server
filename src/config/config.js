@@ -63,6 +63,11 @@ const defaultConfig = {
       blockDuration: parseInt(process.env.RATE_LIMITING_BLOCK_DURATION || "900", 10) // in seconds
     }
   },
+  cache: {
+    enabled: process.env.CACHE_ENABLED === "false",
+    ttl: parseInt(process.env.CACHE_TTL || "300", 10),
+    maxSize: parseInt(process.env.CACHE_MAX_SIZE || "100", 10)
+  },
   cors: {
     origins: (process.env.CORS_ORIGINS || "*").split(","),
     headers: ["Content-Type", "Authorization", "X-Requested-With"]
