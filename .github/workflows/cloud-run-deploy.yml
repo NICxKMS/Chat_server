@@ -80,11 +80,10 @@ jobs:
         fi
         echo "Config file found and will be used for deployment."
       
-    - name: Build and Push Docker image using Cloud Build
+    - name: Build and Push Docker image locally
       run: |
-        gcloud builds submit . \
-          --tag ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
-          --project ${{ env.PROJECT_ID }}
+        docker build -t ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }} .
+        docker push ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
 
     - name: Deploy to Cloud Run
       run: |
