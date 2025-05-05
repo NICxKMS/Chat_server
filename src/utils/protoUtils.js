@@ -13,7 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Path to proto file
-const PROTO_PATH = path.resolve(__dirname, "../protos/models.proto");
+const PROTO_PATH = path.resolve(__dirname, "./protos/models.proto");
 
 // Proto loader options - enhanced for better compatibility with Go server
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
@@ -88,8 +88,8 @@ export function createProtoModel(model) {
     return {
       id: String(model.id || ""),
       name: String(model.name || ""),
-      context_size: Number(model.contextSize || 0),
-      max_tokens: Number(model.maxTokens || 0),
+      context_size: Number(model.tokenLimit || 0),
+      max_tokens: Number(model.tokenLimit || 0),
       provider: String(model.provider || ""),
       display_name: String(model.displayName || ""),
       description: String(model.description || ""),

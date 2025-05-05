@@ -72,10 +72,10 @@ class OpenRouterProvider extends BaseProvider {
         name: id,
         provider: this.name,
         tokenLimit: 8192, // Default token limit
-        features: {
-          streaming: true,
-          system: true
-        }
+        // features: {
+        //   streaming: true,
+        //   system: true
+        // }
       }));
       
       // Dynamically fetch models if enabled
@@ -83,32 +83,32 @@ class OpenRouterProvider extends BaseProvider {
         try {
           // Call OpenRouter API for models
           const response = await this.client.get("/models");
+          // Dump raw OpenRouter models to file
+          // try {
+          //   fs.writeFileSync("openrouter_raw_models.json", JSON.stringify(response.data, null, 2));
+          // } catch (err) {
+          //   logger.error("Error writing raw OpenRouter models to file", { error: err.message });
+          // }
           
           if (response.data && Array.isArray(response.data.data)) {
-            // Process each model from the API
-            const dynamicModels = response.data.data.map((model) => {
-              return {
-                id: model.id,
-                name: model.name || model.id,
-                provider: this.name,
-                tokenLimit: model.context_length || 8192,
-                features: {
-                  streaming: model.features?.includes("streaming") || true,
-                  vision: model.features?.includes("vision") || false,
-                  json: model.features?.includes("json") || false,
-                  tools: model.features?.includes("tools") || false,
-                  system: true
-                }
-              };
-            });
-            
-            // Combine with existing models, prioritizing API results
-            const modelIds = new Set(models.map(m => m.id));
-            for (const model of dynamicModels) {
-              if (!modelIds.has(model.id)) {
-                models.push(model);
-              }
-            }
+            // Map the API's model objects directly to our ProviderModel format
+            const apiModels = response.data.data.map(raw => ({
+              id: raw.id,
+              name: raw.name || raw.id,
+              provider: this.name,
+              tokenLimit: raw.top_provider.max_completion_tokens || raw.context_length || 8192,
+              contextSize: raw.context_length || 8192,
+              description: raw.description || "",
+              // features: {
+              //   streaming: raw.features?.includes("streaming") ?? true,
+              //   vision: raw.features?.includes("vision") ?? false,
+              //   json: raw.features?.includes("json") ?? false,
+              //   tools: raw.features?.includes("tools") ?? false,
+              //   system: true
+              // }
+            }));
+            // Return the API models (skip config fallback)
+            return apiModels;
           }
         } catch (error) {
           logger.warn(`Failed to dynamically load OpenRouter models: ${error.message}`);

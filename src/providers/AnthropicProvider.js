@@ -151,7 +151,11 @@ export class AnthropicProvider extends BaseProvider {
         }
       ];
       
-      return claudeModels;
+      // Expose raw model info along with standardized fields
+      return claudeModels.map(model => ({
+        raw: model,
+        ...model
+      }));
     } catch (error) {
       logger.error(`Error fetching Anthropic models: ${error.message}`);
       throw error;

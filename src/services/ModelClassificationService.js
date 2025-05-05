@@ -113,9 +113,9 @@ export class ModelClassificationService {
         const attemptClassify = (retryCount = 0, maxRetries = 3) => {
           // Write request body to file
           // try {
-          //   fs.writeFileSync('req.json', JSON.stringify(modelList, null, 2));
+          //   fs.writeFileSync("req.json", JSON.stringify(modelList, null, 2));
           // } catch (writeError) {
-          //   logger.error(`[Debug] Error writing request body to req.json`, { error: writeError.message });
+          //   logger.error("[Debug] Error writing request body to req.json", { error: writeError.message });
           // }
           this.client.classifyModels(modelList, (error, response) => {
             clearTimeout(timeout); // Clear timeout once callback is received
@@ -145,7 +145,14 @@ export class ModelClassificationService {
                 return;
               }
 
-              resolve(response); // Resolve the promise with the response, not return it from callback
+              // Write classification response to a file
+              // try {
+              //   fs.writeFileSync("classified_response.json", JSON.stringify(response, null, 2));
+              // } catch (writeError) {
+              //   logger.error("[Debug] Error writing classification response to file", { error: writeError.message });
+              // }
+
+              resolve(response); // Resolve the promise with the response
             }
           });
         };

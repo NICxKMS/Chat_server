@@ -5,11 +5,11 @@
   "main": "src/server.js",
   "type": "module",
   "scripts": {
-    "start": "nodemon --watch src --ext js,json --exec node src/server.js",
+    "start": "node dist/server.js",
     "dev": "nodemon --watch src --ext js,json --exec node src/server.js",
     "dev:ts": "nodemon --watch ts/src --ext ts,json --exec ts-node ts/src/index.ts",
-    "build": "mkdir -p dist && cp -r src/protos dist/protos && babel src --out-dir dist --copy-files",
-    "buildwin": "mkdir dist && ncp src/protos dist/protos && babel src --out-dir dist --copy-files",
+    "build": "mkdir -p dist && cp -r src/protos dist/protos && node esbuild.config.mjs",
+    "buildwin": "mkdir dist && ncp src/protos dist/protos && node esbuild.config.mjs",
     "build:ts": "tsc --project ts/tsconfig.json",
     "postbuild": "cp -r ./src/protos ./dist/protos",
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -57,6 +57,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "esbuild": "^0.18.20",
     "@babel/cli": "^7.24.0",
     "ncp": "^2.0.0",
     "@babel/core": "^7.24.0",

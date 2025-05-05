@@ -16,11 +16,16 @@ import { authenticateUser } from "./middleware/auth/index.js"; // New auth middl
 import config from "./config/config.js";
 import admin from "firebase-admin"; // Added Firebase Admin
 import logger from "./utils/logger.js"; // Import logger
-import { isEnabled as isCacheEnabled } from "./utils/cache.js"; // Import specific function
 import { bodyLimit as chatBodyLimit } from "./controllers/ChatController.js"; // Import bodyLimit
+import firestoreCacheService from "./services/FirestoreCacheService.js"; // Import cache service to warm up
+import modelController from "./controllers/ModelController.js"; // Import raw model controller
+import { applyCaching } from "./controllers/ModelControllerCache.js"; // Import caching wrapper
 
 // Load environment variables from .env file
 dotenv.config({ override: false }); // Load .env but don't override existing env vars
+
+// Record process start time for measuring cold start duration
+const coldStartStart = Date.now();
 
 // Create Fastify application
 // const app = express(); // Removed
@@ -29,6 +34,7 @@ const fastify = Fastify({
   bodyLimit: chatBodyLimit // Set the global body limit here
 }); // Added (with logger)
 const PORT = process.env.PORT || 8080;
+
 
 // --- Initialize Firebase Admin SDK ---
 try {
@@ -54,9 +60,19 @@ try {
   process.exit(1); // Exit if Firebase Admin fails to initialize
 }
 
+// Eagerly initialize Firestore cache service
+firestoreCacheService.initialize();
+
 // Start the server (using async/await)
 const start = async () => {
   try {
+    // Apply Firestore caching to the ModelController if enabled
+    const useCache = process.env.FIRESTORE_CACHE_ENABLED !== "false";
+    if (useCache) {
+      applyCaching(modelController);
+      logger.info("Applied Firestore caching to ModelController");
+    }
+
     // Register essential plugins
     await fastify.register(fastifyCors, {
       // origin: 'http://localhost:3001', // Temporarily commented out
@@ -67,7 +83,9 @@ const start = async () => {
           "https://chat-api-9ru.pages.dev",
           "https://nicxkms.github.io/chat-api",
           "https://nicxkms.github.io",
-          "https://chat-8fh.pages.dev"
+          "https://chat-8fh.pages.dev",
+          "http://localhost:8000",
+          "http://localhost:5000"
         ];
         // const allowedPattern = /\\.chat-api-9ru\\.pages\\.dev$/; // Regex for allowed Cloudflare Pages domain - Replaced with suffix check
         const allowedDomainPrefix = "nicxkms.github.io";
@@ -76,7 +94,7 @@ const start = async () => {
 
         if (process.env.NODE_ENV !== "production") {
           // Allow common dev origins and wildcard in non-production
-          const devOrigins = ["http://localhost:3001", "http://localhost:3000","http://192.168.1.100:3001", "http://localhost:3002"];
+          const devOrigins = ["http://localhost:3001", "http://localhost:8000", "http://localhost:3000", "http://192.168.1.100:3001", "http://localhost:3002"];
           if (!origin || devOrigins.includes(origin) || origin.includes("localhost")) { // Allow requests with no origin (like curl) and common dev hosts
             cb(null, true);
             return;
@@ -153,12 +171,18 @@ const start = async () => {
     // --- Register Error Handler ---
     fastify.setErrorHandler(fastifyErrorHandler);
 
+    // Warm up 'classified-models' cache before accepting real traffic
+    // if (useCache) {
+    // logger.info("Warming up 'classified-models' cache via Firestore...");
+    // await fastify.ready();
+    // const res = await fastify.inject({ method: "GET", url: "/api/models/classified" });
+    // }
+
     // --- Start Server ---
     await fastify.listen({ port: PORT, host: "0.0.0.0" });
-    // Logger automatically logs listen address
-
-    // Determine Base Path from Environment Variable
-    logger.info(`Cache enabled: ${isCacheEnabled()}`);
+    // Log total cold start time after server is listening
+    const coldStartTime = Date.now() - coldStartStart;
+    logger.info(`Cold start completed in ${coldStartTime}ms`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);

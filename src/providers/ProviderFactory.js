@@ -21,7 +21,7 @@ class ProviderFactory {
     try {
       // Initialize provider instances
       this.providers = this._initializeProviders();
-      
+
       // Find a valid default provider
       const availableProviders = Object.keys(this.providers);
       if (availableProviders.includes("openai")) {
@@ -36,11 +36,11 @@ class ProviderFactory {
         this.defaultProvider = availableProviders[0] || "none";
         logger.warn(`No primary providers found, using ${this.defaultProvider} as default`);
       }
-      
+
     } catch (error) {
       logger.error("Error initializing provider factory:", error);
       // Initialize with empty providers if there's an error
-      this.providers = { 
+      this.providers = {
         none: {
           name: "none",
           getModels: async () => [],
@@ -50,27 +50,27 @@ class ProviderFactory {
       this.defaultProvider = "none";
     }
   }
-  
+
   /**
    * Get a provider by name
    */
   getProvider(providerName) {
     const name = providerName || this.defaultProvider;
-    
+
     if (!this.providers[name]) {
       throw new Error(`Provider ${name} not found or not initialized`);
     }
-    
+
     return this.providers[name];
   }
-  
+
   /**
    * Get info for all providers or a specific provider
    */
   async getProvidersInfo(providerName) {
     try {
       const results = {};
-      
+
       // If provider name is specified, return info for that provider only
       if (providerName) {
         if (!this.providers[providerName]) {
@@ -81,12 +81,12 @@ class ProviderFactory {
             }
           };
         }
-        
+
         // Get info for the specified provider
         try {
           const provider = this.providers[providerName];
           const models = await provider.getModels();
-          
+
           results[providerName] = {
             models: models,
             defaultModel: provider.config.defaultModel
@@ -97,15 +97,15 @@ class ProviderFactory {
             error: `Failed to get models for ${providerName}: ${error.message}`
           };
         }
-        
+
         return results;
       }
-      
+
       // Get info for all providers
       const providerInfoPromises = Object.entries(this.providers).map(async ([name, provider]) => {
         try {
           const models = await provider.getModels();
-          
+
           results[name] = {
             models: models,
             defaultModel: provider.config.defaultModel
@@ -117,9 +117,11 @@ class ProviderFactory {
           };
         }
       });
-      
+
       await Promise.all(providerInfoPromises);
+
       return results;
+      
     } catch (error) {
       return {
         error: {
@@ -129,21 +131,21 @@ class ProviderFactory {
       };
     }
   }
-  
+
   /**
    * Get all available providers
    */
   getProviders() {
     return { ...this.providers };
   }
-  
+
   /**
    * Check if a provider is available
    */
   hasProvider(providerName) {
     return !!this.providers[providerName];
   }
-  
+
   /**
    * Initialize provider instances
    */

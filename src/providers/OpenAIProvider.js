@@ -46,7 +46,7 @@ class OpenAIProvider extends BaseProvider {
     this.hasModels = this.cachedModels.length > 0;
     
     // Log initialization status
-    logger.info(`OpenAIProvider initialized with ${this.cachedModels.length} initial models from config`);
+    // logger.info(`OpenAIProvider initialized with ${this.cachedModels.length} initial models from config`);
   }
 
   /**
@@ -61,7 +61,7 @@ class OpenAIProvider extends BaseProvider {
         return this.cachedModels;
       }
       
-      logger.info("Fetching models from OpenAI API...");
+      // logger.info("Fetching models from OpenAI API...");
       
       // Create fallback models in case API call fails
       const fallbackModels = [
@@ -78,12 +78,19 @@ class OpenAIProvider extends BaseProvider {
         // Explicitly call the list method and await the response
         const response = await this.client.models.list();
         
+        // Dump raw API model list to file
+        // try {
+        //   fs.writeFileSync("openai_raw_models.json", JSON.stringify(response.data, null, 2));
+        // } catch (writeErr) {
+        //   logger.error("Error writing raw OpenAI models to file", { error: writeErr.message });
+        // }
+        
         if (!response || !response.data || !Array.isArray(response.data)) {
           logger.error("Invalid response format from OpenAI API", { response });
           throw new Error("Invalid response format from OpenAI models API");
         }
         
-        logger.info(`Received ${response.data.length} models from OpenAI API`);
+        // logger.info(`Received ${response.data.length} models from OpenAI API`);
         
         let filteredModels = response.data
           .filter(model => {
@@ -103,49 +110,24 @@ class OpenAIProvider extends BaseProvider {
             name: model.id,
             provider: this.name,
             tokenLimit: this._getTokenLimit(model.id),
-            features: this._getModelFeatures(model.id)
+            // features: this._getModelFeatures(model.id)
           }));
-      
-      
-        // Cache all available models from API - no config filtering
-        this.cachedModels = filteredModels;
-        this.modelsLoadedFromAPI = true;
-        this.hasModels = true;
-        
-        logger.info(`Successfully loaded ${this.cachedModels.length} models from OpenAI API`);
+              
         
         return filteredModels;
       } catch (error) {
         logger.error("Error fetching OpenAI models from API", { error: error.message });
-        
-        // If we have previously loaded models from the API, return those
-        if (this.modelsLoadedFromAPI && this.cachedModels.length > 0) {
-          logger.warn(`Using ${this.cachedModels.length} previously cached models from API due to error`);
-          return this.cachedModels;
-        }
-        
-        // If we have config models, return those
-        if (this.hasModels && this.cachedModels.length > 0) {
-          logger.warn(`Using ${this.cachedModels.length} models from config due to API error`);
-          return this.cachedModels;
-        }
-        
-        // Otherwise use fallback models
+                
+        // use fallback models
         logger.warn(`Using ${fallbackModels.length} hardcoded fallback models due to API error`);
         const models = this._createModelObjects(fallbackModels);
-        this.cachedModels = models;
-        this.hasModels = true;
         return models;
       }
     } catch (error) {
       logger.error("Error in getModels", { error: error.message });
       
-      // Return any models we have or use fallback models
-      if (this.hasModels && this.cachedModels.length > 0) {
-        return this.cachedModels;
-      }
-      
-      return this._createModelObjects(this.config.models || []);
+
+      return this._createModelObjects(fallbackModels|| []);
     }
   }
 
@@ -158,7 +140,7 @@ class OpenAIProvider extends BaseProvider {
       name: id,
       provider: this.name,
       tokenLimit: this._getTokenLimit(id),
-      features: this._getModelFeatures(id)
+      // features: this._getModelFeatures(id)
     }));
   }
 
@@ -183,38 +165,38 @@ class OpenAIProvider extends BaseProvider {
     return baseModel ? tokenLimits[baseModel] : 4096; // Default to 4K
   }
   
-  /**
-   * Get features supported by a model
-   */
-  _getModelFeatures(modelId) {
-    // Default features
-    const features = {
-      vision: false,
-      streaming: true,
-      functionCalling: false,
-      tools: false,
-      json: false,
-      system: true
-    };
-    
-    // GPT-4 Vision models
-    if (modelId.includes("vision") || modelId.includes("gpt-4-turbo") || modelId.includes("gpt-4o")) {
-      features.vision = true;
-    }
-    
-    // Tool/function calling models
-    if (modelId.includes("gpt-4") || modelId.includes("gpt-3.5-turbo")) {
-      features.functionCalling = true;
-      features.tools = true;
-    }
-    
-    // JSON mode support
-    if (modelId.includes("gpt-4") || modelId.includes("gpt-3.5-turbo")) {
-      features.json = true;
-    }
-    
-    return features;
-  }
+  // /**
+  //  * Get features supported by a model
+  //  */
+  // _getModelFeatures(modelId) {
+  //   // Default features
+  //   const features = {
+  //     vision: false,
+  //     streaming: true,
+  //     functionCalling: false,
+  //     tools: false,
+  //     json: false,
+  //     system: true
+  //   };
+  //   
+  //   // GPT-4 Vision models
+  //   if (modelId.includes("vision") || modelId.includes("gpt-4-turbo") || modelId.includes("gpt-4o")) {
+  //     features.vision = true;
+  //   }
+  //   
+  //   // Tool/function calling models
+  //   if (modelId.includes("gpt-4") || modelId.includes("gpt-3.5-turbo")) {
+  //     features.functionCalling = true;
+  //     features.tools = true;
+  //   }
+  //   
+  //   // JSON mode support
+  //   if (modelId.includes("gpt-4") || modelId.includes("gpt-3.5-turbo")) {
+  //     features.json = true;
+  //   }
+  //   
+  //   return features;
+  // }
 
   /**
    * Send a chat completion request to OpenAI
@@ -487,7 +469,7 @@ class OpenAIProvider extends BaseProvider {
 
       }
 
-      logger.info(`OpenAI stream completed for model ${modelName}. Finish Reason: ${finishReason}`);
+      // logger.info(`OpenAI stream completed for model ${modelName}. Finish Reason: ${finishReason}`);
       // If the final metadata wasn't processed via an x_stream_final_response chunk,
       // send one last meta-chunk if the finish reason is known.
       if (!finalChunkProcessed && finishReason !== "unknown") {

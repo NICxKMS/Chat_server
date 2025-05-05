@@ -34,7 +34,7 @@ class GeminiProvider extends BaseProvider {
     
     // Store API version from config or environment
     this.apiVersion = config.apiVersion || process.env.GEMINI_API_VERSION || "v1beta";
-    logger.info(`Using Gemini API version: ${this.apiVersion}`);
+    // logger.info(`Using Gemini API version: ${this.apiVersion}`);
     
     // Initialize Google Generative AI SDK
     this.genAI = new GoogleGenerativeAI(config.apiKey);
@@ -65,19 +65,11 @@ class GeminiProvider extends BaseProvider {
    */
   async getModels() {
     try {
-      // Start with hardcoded models for fast initial response
-      let modelIds = this.config.models || [
-        "gemini-2.0-flash",
-        "gemini-2.0-pro",
-        "gemini-1.5-pro",
-        "gemini-1.0-pro"
-      ];
-      
+
       // Dynamically fetch models if enabled
       if (this.config.dynamicModelLoading) {
         try {
           // Use Axios to directly call the models endpoint
-          // The SDK doesn't expose a models listing method yet
           const apiKey = this.config.apiKey;
           const baseUrl = `https://generativelanguage.googleapis.com/${this.apiVersion}`;
           
@@ -90,32 +82,51 @@ class GeminiProvider extends BaseProvider {
             }
           });
           
-          // Extract model IDs from response
-          if (response.data && response.data.models) {
-            const dynamicModels = response.data.models
-              .filter(model => {let firstChar = model.name?.[7];
-                return firstChar !== "e" && firstChar !== "t" && firstChar !== "c";})
-              .map((model) => model.name.replace("models/", ""));
-              
-            // Add new models to our list
-            dynamicModels.forEach((model) => {
-              if (!modelIds.includes(model)) {
-                modelIds.push(model);
-              }
-            });
+          // Dump raw Gemini models list to file
+          // try {
+          //   fs.writeFileSync("gemini_raw_models.json", JSON.stringify(response.data, null, 2));
+          // } catch (e) {
+          //   logger.error("Error writing raw Gemini models to file", { error: e.message });
+          // }
+          
+          // If raw models are available, map directly to ProviderModel objects
+          if (response.data?.models && Array.isArray(response.data.models)) {
+            return response.data.models
+              .filter(model => {
+                const firstChar = model.name?.[7];
+                return firstChar !== "e" && firstChar !== "t" && firstChar !== "c";
+              })
+              .map(raw => {
+                const id = raw.name.replace("models/", "");
+                return {
+                  id,
+                  name: raw.displayName,
+                  provider: this.name,
+                  tokenLimit: raw.outputTokenLimit,
+                  contextSize: raw.inputTokenLimit,
+                  // features: this.getModelFeatures(),
+                  description: raw.description || ""
+                };
+              });
           }
         } catch (error) {
           logger.warn(`Failed to dynamically load Gemini models: ${error.message}`);
         }
       }
       
-      // Convert to ProviderModel format
-      return modelIds.map(id => ({
+      // Fallback to config models
+      return (this.config.models || [
+        "gemini-2.0-flash",
+        "gemini-2.0-pro",
+        "gemini-1.5-pro",
+        "gemini-1.0-pro"
+      ]).map(id => ({
         id,
         name: this.formatModelName(id),
         provider: this.name,
         tokenLimit: this.getTokenLimit(id),
-        features: this.getModelFeatures(id)
+        // features: this.getModelFeatures(),
+        description: ""
       }));
       
     } catch (error) {
@@ -148,34 +159,6 @@ class GeminiProvider extends BaseProvider {
     return limits[modelId] || 32768; // default to 32K
   }
   
-  /**
-   * Get features supported by a model
-   */
-  getModelFeatures(modelId) {
-    // Base features all models support
-    const features = {
-      vision: true, // Assume vision is generally available for Gemini
-      streaming: true,
-      tools: false,
-      functionCalling: false,
-      json: false,
-      system: true // Gemini supports system instructions via a specific message format
-    };
-    
-    // Gemini 1.5 specific features
-    if (modelId.includes("gemini-1.5")) {
-      features.tools = true;
-      features.functionCalling = true;
-      features.json = true;
-    }
-    
-    // Older models might not support vision
-    // Add specific checks if needed based on model versions
-    // e.g., if (modelId.includes("gemini-1.0")) { features.vision = false; }
-    
-    return features;
-  }
-
   /**
    * Get info about this provider and its models
    */

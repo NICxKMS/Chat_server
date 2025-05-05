@@ -77,7 +77,7 @@ class ChatController {
         });
       }
       
-      logger.info(`Processing chat request for ${providerName}/${modelName} (requestId: ${requestId})`);
+      // logger.info(`Processing chat request for ${providerName}/${modelName} (requestId: ${requestId})`);
       
       // Store the abort controller keyed by our requestId
       activeGenerations.set(requestId, abortController);
@@ -270,7 +270,7 @@ class ChatController {
     // Set up stream ending utility function
     const safelyEndStream = (message, errorType = null, finalChunk = null) => {
       if (!streamClosed) {
-        logger.info(`${message} (sent ${chunkCounter} chunks)`);
+        // logger.info(`${message} (sent ${chunkCounter} chunks)`);
         if (finalChunk && errorType === null) { // Log only on normal completion
           // logger.debug('[SERVER LAST RAW CHUNK]'); // REMOVING THIS
         }

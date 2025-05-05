@@ -8,8 +8,6 @@ import * as metrics from "../utils/metrics.js";
 import { ModelClassificationService } from "../services/ModelClassificationService.js";
 import { createBreaker } from "../utils/circuitBreaker.js";
 import logger from "../utils/logger.js";
-import { applyCaching } from "./ModelControllerCache.js";
-import firestoreCacheService from "../services/FirestoreCacheService.js";
 
 class ModelController {
   constructor() {
@@ -370,7 +368,5 @@ class ModelController {
 // Create singleton instance
 const controller = new ModelController();
 
-// Apply Firestore caching only if enabled, otherwise use regular controller
-export default firestoreCacheService.isEnabled() ? 
-  applyCaching(controller) : 
-  controller; 
+// Export raw controller; caching will be applied in server.js after Firebase initialization
+export default controller; 
