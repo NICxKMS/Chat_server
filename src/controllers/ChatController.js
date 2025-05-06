@@ -153,7 +153,10 @@ class ChatController {
         activeGenerations.delete(requestId);
         
         // Check if this was an abort error
-        if (providerError.name === "AbortError" || providerError.message?.includes("aborted")) {
+        if (
+          providerError.name === "AbortError" ||
+          (providerError.message && /aborted|canceled/i.test(providerError.message))
+        ) {
           logger.info(`Request ${requestId} was aborted`);
           return reply.status(499).send({
             error: "Request aborted",
@@ -254,7 +257,7 @@ class ChatController {
     const requestId = clientRequestId || request.id || `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     let streamStartTime = null;
     let ttfbRecorded = false;
-    let chunkCounter = 0;
+    // let chunkCounter = 0;
     let lastProviderChunk = null; // Variable to store the last chunk
 
     // Store the abort controller for potential stopping
@@ -401,7 +404,7 @@ class ChatController {
         lastProviderChunk = chunk; // Store the latest chunk
         if (streamClosed) { break; }
         lastActivityTime = Date.now(); 
-        chunkCounter++;
+        // chunkCounter++;
         
         if (!ttfbRecorded) {
           const ttfbSeconds = (Date.now() - streamStartTime) / 1000;
@@ -438,7 +441,10 @@ class ChatController {
       logger.error(`Stream error: ${error.message}`, { provider: providerName, model: modelName, stack: error.stack });
       
       // Check if this was an abort error
-      if (error.name === "AbortError" || error.message?.includes("aborted")) {
+      if (
+        error.name === "AbortError" ||
+        (error.message && /aborted|canceled/i.test(error.message))
+      ) {
         // Send a special message for aborted requests
         if (!streamClosed && !stream.writableEnded) {
           try {
@@ -459,7 +465,7 @@ class ChatController {
       const errorType = "provider_error";
       
       // Check if headers have been sent
-      if (!reply.sent && !streamClosed) {
+      if (!reply.raw.headersSent && !streamClosed) {
         // Headers not sent, we can use reply to send a JSON error
         streamClosed = true; 
         if (heartbeatInterval) { clearInterval(heartbeatInterval); }
