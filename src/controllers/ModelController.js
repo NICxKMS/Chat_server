@@ -4,7 +4,6 @@
  */
 import providerFactory from "../providers/ProviderFactory.js";
 import * as cache from "../utils/cache.js";
-import * as metrics from "../utils/metrics.js";
 import { ModelClassificationService } from "../services/ModelClassificationService.js";
 import { createBreaker } from "../utils/circuitBreaker.js";
 import logger from "../utils/logger.js";
@@ -74,7 +73,6 @@ class ModelController {
       this.modelClassificationService = null;
     }
     
-    logger.info("ModelController initialized");
   }
 
   /**
@@ -85,9 +83,6 @@ class ModelController {
    */
   async getAllModels(request, reply) {
     try {
-      // Record request in metrics
-      metrics.incrementRequestCount();
-      
       // Get models from all providers using the factory
       const providersInfo = await providerFactory.getProvidersInfo();
       const modelsByProvider = {};
@@ -134,9 +129,6 @@ class ModelController {
    */
   async getProviderModels(request, reply) {
     try {
-      // Record request in metrics
-      metrics.incrementRequestCount();
-      
       const { providerName } = request.params; // Use request.params
       
       if (!providerName) {
@@ -194,9 +186,6 @@ class ModelController {
    */
   async getProviderCapabilities(request, reply) {
     try {
-      // Record request in metrics
-      metrics.incrementRequestCount();
-      
       // Get all provider info
       const providersInfo = await providerFactory.getProvidersInfo();
       
@@ -223,9 +212,6 @@ class ModelController {
    */
   async getCategorizedModels(request, reply) {
     try {
-      // Record request in metrics
-      metrics.incrementRequestCount();
-      
       // Check if classification service is enabled and available
       if (this.useClassificationService && this.modelClassificationService) {
         // If enabled, delegate to the classification service method
@@ -278,8 +264,6 @@ class ModelController {
     }
     
     try {
-      metrics.incrementRequestCount();
-      
       // Use cached results if available
       const cacheKey = "classifiedModels";
       const cachedData = await cache.getOrSet(cacheKey, async () => {
@@ -287,9 +271,7 @@ class ModelController {
         const providersInfo = await providerFactory.getProvidersInfo();
           
         // Call the classification service via the circuit breaker
-        logger.debug("Calling classification service via circuit breaker...");
         const classifiedModels = await this.classifyBreaker.fire(providersInfo);
-        logger.debug("Classification service call successful.");
           
         // Convert proto response to standard JS objects if necessary (assuming service returns proto)
         // This depends on the service implementation. If it already converts, this is not needed.
@@ -328,7 +310,6 @@ class ModelController {
     }
 
     try {
-      metrics.incrementRequestCount();
       const criteria = request.body; // Assuming criteria are in the request body
 
       if (!criteria || typeof criteria !== "object" || Object.keys(criteria).length === 0) {
@@ -339,9 +320,7 @@ class ModelController {
       const cacheKey = `classifiedModelsCriteria:${JSON.stringify(criteria)}`;
       const cachedData = await cache.getOrSet(cacheKey, async () => {
         // Call the classification service via the circuit breaker
-        logger.debug("Calling classification service (criteria) via circuit breaker...");
         const classifiedModels = await this.criteriaBreaker.fire(criteria);
-        logger.debug("Classification service call (criteria) successful.");
         // Assuming the service returns a usable format
         return classifiedModels; 
       });

@@ -10,10 +10,12 @@ import * as metrics from "../utils/metrics.js";
 import logger from "../utils/logger.js";
 import http from "http";
 import https from "https";
+import { 
+  ProviderSseError,
+  // Import other custom errors if needed directly
+} from "../utils/CustomError.js";
 
 // Agents for keep-alive connections
-const keepAliveHttpAgent = new http.Agent({ keepAlive: true });
-const keepAliveHttpsAgent = new https.Agent({ keepAlive: true });
 
 // Helper to check if a string is a base64 data URL and extract parts
 
@@ -32,8 +34,8 @@ class OpenRouterProvider extends BaseProvider {
       baseURL: this.baseUrl,
       timeout: this.timeout,
       headers: { Authorization: `Bearer ${this.apiKey}` },
-      httpAgent: keepAliveHttpAgent,
-      httpsAgent: keepAliveHttpsAgent
+      httpAgent: new http.Agent({ keepAlive: true }),
+      httpsAgent: new https.Agent({ keepAlive: true })
     });
     
     // Extract API version info
@@ -337,28 +339,60 @@ class OpenRouterProvider extends BaseProvider {
   async *chatCompletionStream(options) {
     const so = this.standardizeOptions(options);
     this.validateOptions(so);
-    const { messages } = so;
+    
+    // OpenRouter model IDs are often prefixed (e.g., "openai/gpt-3.5-turbo")
+    // The payload should send the model ID as is, BaseProvider might use parts of it for metrics.
     const payload = {
-      model: so.model,
-      messages,
+      model: so.model, // Use the full model string from options
+      messages: this._processMessagesForOpenRouter(so.messages), // Ensure this method exists and is correct
       temperature: so.temperature,
-      max_tokens: so.max_tokens,
+      max_tokens: so.max_tokens, // OpenRouter uses max_tokens, not max_completion_tokens
       stream: true,
+      // OpenRouter might support stream_options like OpenAI, but it's not explicitly documented for all models.
+      // Adding it might be benign or could cause issues with some models. Best to check OpenRouter docs.
+      // stream_options: { include_usage: true }, 
       ...(so.top_p !== undefined && { top_p: so.top_p }),
       ...(so.frequency_penalty !== undefined && { frequency_penalty: so.frequency_penalty }),
       ...(so.presence_penalty !== undefined && { presence_penalty: so.presence_penalty }),
-      ...(so.stop && { stop: so.stop })
+      ...(so.stop && { stop: so.stop }),
+      // ...(so.response_format?.type === "json_object" && { response_format: { type: "json_object" } }) // Check if OpenRouter supports this for all models
     };
-    for await (const evt of this._streamViaGot("chat/completions", payload, so.abortSignal)) {
-      // Propagate any LLM error events
-      if (evt.event === "error") {
-        const errData = evt.data;
-        const err = new Error(errData.message || "LLM error");
-        err.code = errData.code || errData.type;
-        throw err;
+
+    try {
+      for await (const evt of this._streamViaGot("chat/completions", payload, so.abortSignal)) {
+        if (evt.event === "error") { // Check for LLM-sent error events
+          const errData = evt.data || {};
+          logger.warn("[OpenRouterProvider] Received error event from LLM stream", { errData });
+          throw new ProviderSseError(
+            errData.message || "An error occurred in the OpenRouter stream.",
+            this.name,
+            errData.code || errData.type || "LLM_STREAM_ERROR",
+            errData,
+            evt
+          );
+        }
+
+        const chunk = evt.data;
+        if (chunk === "[DONE]") {
+          logger.debug("[OpenRouterProvider] Received [DONE] marker.");
+          continue;
+        }
+
+        // Normalize and yield the actual data chunk
+        const normalized = this._normalizeStreamChunk(chunk, so.model); // Pass so.model for consistency
+        if (normalized) { // _normalizeStreamChunk might return null for invalid chunks
+          yield normalized;
+        }
       }
-      const normalized = this._normalizeStreamChunk(evt.data, so.model, 0);
-      yield normalized;
+    } catch (error) {
+      logger.error(`[OpenRouterProvider.chatCompletionStream] Error during streaming for ${so.model}: ${error.message}`, {
+        errorName: error.name,
+        errorCode: error.code,
+        statusCode: error.statusCode,
+        providerDetails: error.details,
+        stack: error.stack 
+      });
+      throw error; // Re-throw the caught error (custom or otherwise)
     }
   }
 
@@ -366,44 +400,38 @@ class OpenRouterProvider extends BaseProvider {
    * Normalizes a streaming chunk received from the OpenRouter API (which uses OpenAI format).
    * @param {object} chunk - The raw, parsed JSON object from an SSE data line.
    * @param {string} model - The model name used for the request.
-   * @param {number} latency - The latency to the first chunk (milliseconds).
    * @returns {object} A standardized chunk object matching the API schema.
    */
-  _normalizeStreamChunk(chunk, model, latency) {
-    try {
-      // OpenRouter stream chunks often follow OpenAI's format
-      const choice = chunk.choices?.[0];
-      const delta = choice?.delta;
-      
-      // Extract finish_reason and usage *from the chunk* if available
-      const finishReason = choice?.finish_reason || "unknown";
-      const usage = chunk.usage || { // Initialize usage, OpenRouter might send it in the last chunk
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0
-      };
-
-      return {
-        id: chunk.id,
-        model: chunk.model || model, // Use model from chunk if available
-        provider: this.name,
-        createdAt: chunk.created ? new Date(chunk.created * 1000).toISOString() : new Date().toISOString(),
-        content: delta?.content || null,
-        toolCalls: delta?.tool_calls || null, // Include tool call deltas
-        usage: usage, // Use usage extracted from chunk or default
-        latency: latency,
-        finishReason: finishReason, // Use finishReason extracted from chunk or default
-        raw: chunk
-      };
-    } catch (error) {
-      logger.error(`Error normalizing OpenRouter stream chunk: ${error.message}`, { chunk });
-      // Return a minimal error chunk or rethrow
-      return {
-        id: `error-chunk-${Date.now()}`,
-        error: `Failed to normalize chunk: ${error.message}`,
-        raw: chunk
-      };
+  _normalizeStreamChunk(chunk, modelName) {
+    if (typeof chunk !== "object" || chunk === null) {
+      logger.warn("[OpenRouterProvider._normalizeStreamChunk] Received non-object chunk, skipping normalization.", { chunk });
+      return null;
     }
+
+    // OpenRouter generally follows OpenAI's streaming format
+    const choice = chunk.choices?.[0];
+    const delta = choice?.delta;
+    const finishReason = choice?.finish_reason;
+    
+    // OpenRouter can also send a final chunk with usage details (especially for OpenAI-compatible models)
+    const usage = chunk.usage ? {
+      promptTokens: chunk.usage.prompt_tokens || 0,
+      completionTokens: chunk.usage.completion_tokens || 0,
+      totalTokens: chunk.usage.total_tokens || 0
+    } : null;
+
+    return {
+      id: chunk.id,
+      model: chunk.model || modelName, // Use model from chunk if available, else fallback to request's modelName
+      provider: this.name,
+      createdAt: chunk.created ? new Date(chunk.created * 1000).toISOString() : new Date().toISOString(),
+      content: delta?.content || null,
+      toolCalls: delta?.tool_calls || null,
+      usage: usage,
+      latency: 0, // TTFB handled in BaseProvider
+      finishReason: finishReason || null,
+      raw: chunk
+    };
   }
 }
 

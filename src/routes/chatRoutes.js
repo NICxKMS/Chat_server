@@ -3,56 +3,10 @@
  * Routes for the chat API endpoints
  */
 import chatController from "../controllers/ChatController.js";
+import { chatPayloadSchema, stopSchema } from "../schemas/chatSchemas.js";
 
 // Fastify Plugin function
 async function chatRoutes (fastify) {
-
-  // JSON schema for chat payloads (validates and coerces types)
-  const chatPayloadSchema = {
-    body: {
-      type: "object",
-      required: ["model", "messages"],
-      properties: {
-        model: { type: "string" },
-        messages: {
-          type: "array",
-          items: {
-            type: "object",
-            required: ["role", "content"],
-            properties: {
-              role: { type: "string", enum: ["system","user","assistant"] },
-              content: { anyOf: [
-                { type: "string" },
-                { type: "array" },
-                { type: "object" }
-              ] }
-            },
-            additionalProperties: false
-          },
-          minItems: 1
-        },
-        temperature:       { type: "number", default: 0.7 },
-        max_tokens:        { type: "integer", default: 1000 },
-        top_p:             { type: "number" },
-        frequency_penalty: { type: "number" },
-        presence_penalty:  { type: "number" },
-        requestId:         { type: "string" }
-      },
-      additionalProperties: false
-    }
-  };
-
-  // JSON schema for stop endpoint
-  const stopSchema = {
-    body: {
-      type: "object",
-      required: ["requestId"],
-      properties: {
-        requestId: { type: "string" }
-      },
-      additionalProperties: false
-    }
-  };
 
   /**
    * POST /completions (within plugin prefix)
@@ -70,9 +24,7 @@ async function chatRoutes (fastify) {
    */
   fastify.post(
     "/stream",
-    {
-      schema: chatPayloadSchema
-    },
+    { schema: chatPayloadSchema },
     chatController.chatCompletionStream
   );
 

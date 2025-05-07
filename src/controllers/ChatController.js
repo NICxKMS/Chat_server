@@ -28,7 +28,6 @@ class ChatController {
     this.chatCompletionStream = this.chatCompletionStream.bind(this);
     this.getChatCapabilities = this.getChatCapabilities.bind(this);
     this.stopGeneration = this.stopGeneration.bind(this);
-    logger.info("ChatController initialized");
   }
 
   /**
@@ -45,8 +44,6 @@ class ChatController {
     const requestId = clientRequestId || request.id || `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     
     try {
-      metrics.incrementRequestCount();
-      
       // Extract all validated/coerced body properties (validation done by Fastify schema)
       const { model, messages, temperature, max_tokens, top_p, frequency_penalty, presence_penalty, nocache } = request.body;
       
@@ -65,9 +62,9 @@ class ChatController {
       const provider = providerFactory.getProvider(providerName);
       
       if (!provider) {
-        return reply.status(404).send({ 
-          error: `Provider '${providerName}' not found or not configured`
-        });
+        const err = new Error(`Provider '${providerName}' not found or not configured.`);
+        err.name = "NotFoundError";
+        throw err;
       }
       
       // logger.info(`Processing chat request for ${providerName}/${modelName} (requestId: ${requestId})`);
@@ -247,36 +244,22 @@ class ChatController {
     let lastActivityTime = Date.now();
     let heartbeatInterval = null;
     let timeoutCheckInterval = null;
-    // Create the abort controller and derive requestId (client-supplied wins)
     let abortController = new AbortController();
     const clientRequestId = request.body?.requestId;
     const requestId = clientRequestId || request.id || `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     let streamStartTime = null;
     let ttfbRecorded = false;
-    // let chunkCounter = 0;
-    let lastProviderChunk = null; // Variable to store the last chunk
+    let lastProviderChunk = null;
 
-    // Store the abort controller for potential stopping
     activeGenerations.set(requestId, abortController);
-
-    // Create a PassThrough stream with a low highWaterMark for immediate flushing
-    // const { PassThrough } = await import("node:stream");
-    // Required time about<1ms to let server finish setup of i dont know what to work correctly
     await new Promise(resolve => setImmediate(resolve));
-
-
     const stream = new PassThrough({
       highWaterMark: 1,  // Use smallest highWaterMark to ensure immediate chunk delivery
       autoDestroy: true  // Automatically destroy when finished
     });
 
-    // Set up stream ending utility function
-    const safelyEndStream = (message, errorType = null, finalChunk = null) => {
+    const safelyEndStream = (message, errorType = null) => {
       if (!streamClosed) {
-        // logger.info(`${message} (sent ${chunkCounter} chunks)`);
-        if (finalChunk && errorType === null) { // Log only on normal completion
-          // logger.debug('[SERVER LAST RAW CHUNK]'); // REMOVING THIS
-        }
 
         streamClosed = true;
         
@@ -295,35 +278,25 @@ class ChatController {
         // Remove from active generations
         activeGenerations.delete(requestId);
 
-        // Send final [DONE] event to explicitly signal completion to clients
-        try {
+        // Conditionally write and flush final marker, then close or destroy
+        if (!stream.writableEnded && stream.writable) {
           stream.write("data: [DONE]\n\n");
-          // Explicitly flush any remaining buffered data
-          stream.uncork();
-        } catch (e) {
-          logger.warn(`Error sending final [DONE] event: ${e.message}`);
-        }
-
-        // End the stream properly
-        if (!stream.writableEnded) {
+          stream.uncork && stream.uncork();
           stream.end();
+        } else if (!stream.destroyed) {
+          stream.destroy();
         }
       }
     };
 
     try {
-      metrics.incrementRequestCount();
-      
       // Extract all validated/coerced body properties (validation done by Fastify schema)
       const { model, messages, temperature, max_tokens, top_p, frequency_penalty, presence_penalty } = request.body;
-      
-      // Extract provider name and model name
       const separatorIndex = model.indexOf("/");
-      if (separatorIndex !== -1) { // Check if "/" exists
-        providerName = model.substring(0, separatorIndex); // Part before the first "/"
-        modelName = model.substring(separatorIndex + 1); // Part after the first "/"
+      if (separatorIndex !== -1) {
+        providerName = model.substring(0, separatorIndex);
+        modelName = model.substring(separatorIndex + 1);
       } else {
-        // Fallback logic (unchanged)
         const defaultProvider = providerFactory.getProvider();
         providerName = defaultProvider.name;
         modelName = model;
@@ -331,19 +304,18 @@ class ChatController {
 
       const provider = providerFactory.getProvider(providerName);
       if (!provider) {
-        return reply.status(404).send({ error: `Provider '${providerName}' not found or not configured` });
+        const err = new Error(`Provider '${providerName}' not found or not configured.`);
+        err.name = "NotFoundError";
+        throw err;
       }
 
-      logger.info(`Processing STREAMING chat request for ${providerName}/${modelName} (requestId: ${requestId})`);
       streamStartTime = Date.now();
       
-      // Set headers optimized for streaming
       reply.header("Content-Type", "text/event-stream");
       reply.header("Cache-Control", "no-cache, no-transform");
       reply.header("X-Accel-Buffering", "no"); // Prevent nginx buffering
       reply.header("X-Request-ID", requestId); // Echo the client requestId for stop calls
 
-      // Conditionally set HTTP/1.1 specific headers
       if (request.raw.httpVersion && request.raw.httpVersion.startsWith("1.")) {
         reply.header("Connection", "keep-alive");
         reply.header("Transfer-Encoding", "chunked");
@@ -352,9 +324,7 @@ class ChatController {
         logger.debug(`HTTP/2 or newer detected (${request.raw.httpVersion}), skipping HTTP/1.1 specific stream headers.`);
       }
       
-      // Send the stream to the client and disable Nagle for low-latency
       reply.send(stream);
-      // Flush HTTP headers immediately to reduce latency
       if (typeof reply.raw.flushHeaders === "function") {
         reply.raw.flushHeaders();
       }
@@ -363,7 +333,6 @@ class ChatController {
       }
       lastActivityTime = Date.now();
 
-      // Set up heartbeat interval
       heartbeatInterval = setInterval(() => {
         if (!streamClosed && !stream.writableEnded) { 
           try {
@@ -374,7 +343,6 @@ class ChatController {
         }
       }, HEARTBEAT_INTERVAL_MS);
 
-      // Setup inactivity timeout check
       timeoutCheckInterval = setInterval(() => {
         if (Date.now() - lastActivityTime > TIMEOUT_DURATION_MS) {
           safelyEndStream(`Stream timed out due to inactivity for ${providerName}/${modelName}`, "timeout");
@@ -382,13 +350,11 @@ class ChatController {
         }
       }, TIMEOUT_DURATION_MS / 2);
 
-      // Handle client disconnect
       request.raw.on("close", () => {
         safelyEndStream(`Client disconnected stream for ${providerName}/${modelName}`, "client_disconnect");
         abortController.abort();
       });
 
-      // Prepare options with validated/coerced values
       const options = {
         model: modelName,
         messages,
@@ -396,39 +362,25 @@ class ChatController {
         max_tokens,
         abortSignal: abortController.signal
       };
-      // Add optional parameters
       if (top_p !== undefined) { options.top_p = top_p; }
       if (frequency_penalty !== undefined) { options.frequency_penalty = frequency_penalty; }
       if (presence_penalty !== undefined) { options.presence_penalty = presence_penalty; }
 
-      // Get provider stream
       const providerStream = provider.chatCompletionStream(options);
-      // Optimized stream processing with immediate chunk writing
       for await (const chunk of providerStream) {
-        lastProviderChunk = chunk; // Store the latest chunk
+        lastProviderChunk = chunk;
         if (streamClosed) { break; }
-        lastActivityTime = Date.now(); 
-        // chunkCounter++;
-        
-        if (!ttfbRecorded) {
+        lastActivityTime = Date.now();
+        if (!ttfbRecorded && streamStartTime) {
           const ttfbSeconds = (Date.now() - streamStartTime) / 1000;
           metrics.recordStreamTtfb(providerName, modelName, ttfbSeconds);
           ttfbRecorded = true;
         }
-        // metrics.incrementStreamChunkCount(providerName, modelName);
-
         const sseFormattedChunk = `data: ${JSON.stringify(chunk)}\n\n`;
-        // logger.debug(`[SSE SENT] Chunk ${chunkCounter} for ${providerName}/${modelName}`, { sseChunk: sseFormattedChunk }); // REMOVING THIS
-
         if (!streamClosed && !stream.writableEnded) {
           try {
-            // Write each chunk immediately without buffering
             stream.write(sseFormattedChunk);
-            
-            // Force immediate flush after each chunk for optimal responsiveness
-            if (typeof stream.uncork === "function") {
-              stream.uncork();
-            }
+            stream.uncork && stream.uncork();
           } catch (writeError) {
             logger.error(`Error writing chunk to stream: ${writeError.message}`);
             safelyEndStream(`Error writing chunk to stream: ${writeError.message}`, "write_error");
@@ -437,74 +389,83 @@ class ChatController {
         }
       }
       
-      // If loop completes normally, end the stream and pass the last chunk
       safelyEndStream(`Stream finished normally for ${providerName}/${modelName}`, null, lastProviderChunk);
       
     } catch (error) {
-      // Handle errors
-      logger.error(`Stream error: ${error.message}`, { provider: providerName, model: modelName, stack: error.stack });
-      
-      // Check if this was an abort error
-      if (
-        error.name === "AbortError" ||
-        (error.message && /aborted|canceled/i.test(error.message))
-      ) {
-        // Send a special message for aborted requests
+      logger.error(`[ChatController.chatCompletionStream] Error: ${error.message}`, {
+        provider: error.providerName || providerName, // Use error.providerName if available
+        model: modelName, // modelName might not be set if error was very early
+        requestId: requestId,
+        errorName: error.name, // e.g., ProviderRateLimitError, StreamReadError
+        errorCode: error.code, // e.g., PROVIDER_RATE_LIMIT, STREAM_READ_ERROR
+        statusCode: error.statusCode, // e.g., 429, 500
+        details: error.details, // Raw error details from provider or system
+        stack: error.stack
+      });
+
+      if (error.name === "AbortError" || (error.message && /aborted|canceled/i.test(error.message))) {
         if (!streamClosed && !stream.writableEnded) {
           try {
-            const abortEventData = {
-              type: "abort",
-              message: "Generation was stopped by the client"
-            };
+            const abortEventData = { type: "abort", message: "Generation was stopped by the client" };
             stream.write(`event: abort\ndata: ${JSON.stringify(abortEventData)}\n\n`);
-          } catch (e) {
-            logger.warn(`Error sending abort event: ${e.message}`);
-          }
+          } catch (e) { logger.warn(`Error sending abort event: ${e.message}`); }
         }
-        
-        safelyEndStream(`Stream aborted for ${providerName}/${modelName}`, "client_abort");
-        return; // Exit early on abort
+        safelyEndStream(`Stream aborted for ${providerName || "unknown"}/${modelName || "unknown"}`, "client_abort");
+        return;
       }
-      
-      const errorType = "provider_error";
-      
-      // Check if headers have been sent
+
+      const metricsErrorType = error.code || error.name || "UNKNOWN_STREAM_ERROR";
+
       if (!reply.raw.headersSent && !streamClosed) {
-        // Headers not sent, we can use reply to send a JSON error
         streamClosed = true;
         if (heartbeatInterval) { clearInterval(heartbeatInterval); }
         if (timeoutCheckInterval) { clearInterval(timeoutCheckInterval); }
-
-        // Determine appropriate status code from error if possible
-        const statusCode = error.status || 500;
-        reply.status(statusCode)
-          .type("application/json")
-          .send({
-            error: "Stream processing error",
-            message: error.message
-          });
-        return;
-      } else if (!streamClosed && !stream.writableEnded) {
-        // SSE error event branch
-        const errorPayload = {
-          code: error.code || error.name || "ProviderStreamError",
-          message: error.message || "An error occurred during streaming.",
-          status: error.status || 500,
-          provider: providerName,
-          model: modelName
-        };
         
+        const responseStatusCode = error.statusCode || 500;
+        reply.status(responseStatusCode).type("application/json").send({
+          error: {
+            message: error.message || "Stream setup error before headers sent.",
+            code: error.code || error.name || "STREAM_SETUP_ERROR", 
+            type: error.name || "StreamSetupError",
+            details: error.details,
+            ...(error.providerName && { provider: error.providerName })
+          }
+        });
+        return;
+      }
+
+      if (!streamClosed && !stream.writableEnded && reply.raw.headersSent) {
+        const effectiveProviderName = error.providerName || providerName || "unknown_provider";
+        const effectiveModelName = modelName || "unknown_model"; // modelName from controller scope
+
+        const errorPayloadForStream = {
+          id: `${effectiveProviderName}-stream-error-${Date.now()}`,
+          model: effectiveModelName,
+          provider: effectiveProviderName,
+          error: {
+            message: error.message || "An error occurred during streaming.",
+            code: error.code || "UNKNOWN_ERROR", // Our app-specific string code
+            type: error.name || "StreamError", // The actual class name of the error
+            ...(error.statusCode && { httpStatusCode: error.statusCode }),
+            details: error.details,
+          },
+          finishReason: "error",
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          latency: streamStartTime ? Date.now() - streamStartTime : 0
+        };
         try {
-          const sseErrorEvent = `event: error\ndata: ${JSON.stringify(errorPayload)}\n\n`;
-          stream.write(sseErrorEvent);
-          safelyEndStream(`Error sent to client for ${providerName}/${modelName}`, errorType);
+          stream.write(`data: ${JSON.stringify(errorPayloadForStream)}\n\n`);
+          stream.uncork && stream.uncork();
         } catch (e) {
-          logger.warn(`Error sending error event: ${e.message}`);
-          safelyEndStream(`Failed to send error to client for ${providerName}/${modelName}`, errorType);
+          logger.warn(`Error writing error data to stream: ${e.message}`);
         }
+        safelyEndStream(
+          `Stream error for ${effectiveProviderName}/${effectiveModelName}`,
+          metricsErrorType,
+          lastProviderChunk 
+        );
       }
     } finally {
-      // Always clean up active generation slot on exit
       activeGenerations.delete(requestId);
     }
   }
@@ -549,8 +510,6 @@ class ChatController {
    */
   async getChatCapabilities(request, reply) {
     try {
-      metrics.incrementRequestCount();
-      
       const circuitBreakerStates = getCircuitBreakerStates();
       
       let cacheStats = { enabled: false };

@@ -1,4 +1,6 @@
 import axios from "axios";
+import http from "http";
+import https from "https";
 import axiosRetry from "axios-retry";
 import logger from "./logger.js";
 
@@ -12,7 +14,9 @@ import logger from "./logger.js";
  * @returns {AxiosInstance}
  */
 export function createHttpClient({ baseURL, headers = {}, timeout = 30000, maxRetries = 0 }) {
-  const client = axios.create({ baseURL, headers, timeout });
+  const httpAgent = new http.Agent({ keepAlive: true });
+  const httpsAgent = new https.Agent({ keepAlive: true });
+  const client = axios.create({ baseURL, headers, timeout, httpAgent, httpsAgent });
   if (maxRetries > 0) {
     axiosRetry(client, {
       retries: maxRetries,

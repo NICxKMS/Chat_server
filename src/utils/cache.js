@@ -29,9 +29,35 @@ function generateKey(keyOrData, ...args) {
   // If keyOrData is an object, create a stable, sorted JSON string.
   if (typeof keyOrData === "object" && keyOrData !== null) {
     try {
+      const MAX_MESSAGES_TO_HASH = 10; // Consider making this configurable
+      let messagesSummary = "";
+
+      if (Array.isArray(keyOrData.messages)) {
+        const relevantMessages = keyOrData.messages.slice(-MAX_MESSAGES_TO_HASH);
+        messagesSummary = relevantMessages.map(m => {
+          // Create a consistent string for each message.
+          // If content is an object (e.g. multimodal), stringify it consistently.
+          const contentStr = (typeof m.content === "string") ? m.content : JSON.stringify(m.content, Object.keys(m.content || {}).sort());
+          return `${m.role}:${contentStr}`;
+        }).join("|");
+        messagesSummary = `msgCount:${keyOrData.messages.length}|${messagesSummary}`;
+      }
+
+      // Create a new object for stringification, replacing original messages with summary
+      const dataToHash = {};
+      const sortedKeys = Object.keys(keyOrData).sort();
+
+      for (const key of sortedKeys) {
+        if (key === "messages") {
+          dataToHash[key] = messagesSummary;
+        } else {
+          dataToHash[key] = keyOrData[key];
+        }
+      }
       // Stringify with sorted keys for consistency
-      baseString = JSON.stringify(keyOrData, Object.keys(keyOrData).sort());
+      baseString = JSON.stringify(dataToHash, Object.keys(dataToHash).sort()); // Sort keys of dataToHash
     } catch (e) {
+      // logger.error("Error stringifying object for cache key:", e); // Assuming logger is not available here directly
       logger.error("Error stringifying object for cache key:", e);
       baseString = "cache-key-stringify-error"; // Fallback string
     }
@@ -240,4 +266,16 @@ export {
   generateKey,
   getStats,
   isEnabled
-}; 
+};
+
+// Periodic cleanup: remove expired entries to bound memory usage
+const CACHE_SWEEP_INTERVAL_MS = parseInt(process.env.CACHE_SWEEP_INTERVAL_MS || "300000", 10);
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, item] of cacheStore) {
+    if (item.expiry < now) {
+      cacheStore.delete(key);
+    }
+  }
+  stats.size = cacheStore.size;
+}, CACHE_SWEEP_INTERVAL_MS).unref(); 

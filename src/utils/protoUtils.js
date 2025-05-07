@@ -15,21 +15,23 @@ const __dirname = path.dirname(__filename);
 // Path to proto file
 const PROTO_PATH = path.resolve(__dirname, "./protos/models.proto");
 
-// Proto loader options - enhanced for better compatibility with Go server
-const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
-  keepCase: true,
-  longs: String,
-  enums: String,
-  defaults: true,
-  oneofs: true,
-  includeDirs: [path.resolve(__dirname, "..")],
-});
-
-// Load proto file
-const protoDescriptor = grpc.loadPackageDefinition(packageDefinition);
-
-// Get the service definition and message types from the modelservice package
-const modelService = protoDescriptor.modelservice;
+// Lazy-load the proto service definition
+let modelService;
+function getModelService() {
+  if (!modelService) {
+    const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
+      keepCase: true,
+      longs: String,
+      enums: String,
+      defaults: true,
+      oneofs: true,
+      includeDirs: [path.resolve(__dirname, "..")]    
+    });
+    const protoDescriptor = grpc.loadPackageDefinition(packageDefinition);
+    modelService = protoDescriptor.modelservice;
+  }
+  return modelService;
+}
 
 /**
  * Create a gRPC client for the model classification service
@@ -45,7 +47,8 @@ export function createModelClassificationClient(serverAddress = "localhost:8080"
     "grpc.default_compression_level": 0, // No compression
   };
 
-  return new modelService.ModelClassificationService(
+  const svc = getModelService();
+  return new svc.ModelClassificationService(
     serverAddress,
     grpc.credentials.createInsecure(),
     options
