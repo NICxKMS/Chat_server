@@ -41,3 +41,5 @@ GEMINI_API_VERSION: v1beta
 GOOGLE_APPLICATION_CREDENTIALS: /secrets/firebase/authkey.json
 FIRESTORE_CACHE_ENABLED: 'true'
 # FIRESTORE_CACHE_TTL is already defined above 
+
+HTTP2_ENABLED: 'true'

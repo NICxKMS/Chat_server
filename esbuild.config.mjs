@@ -13,7 +13,10 @@ build({
   platform: "node",
   target: ["node20"],
   format: "esm",
+  banner: {
+    js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);"
+  },
+  minify: true,
   external: [...Object.keys(pkg.dependencies), ...builtinModules],
   outfile: "dist/server.js",
-  minify: true
 }).catch(() => process.exit(1)); 
