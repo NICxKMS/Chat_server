@@ -17,6 +17,7 @@ build({
     js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);"
   },
   minify: true,
+  pure: ["console.log", "logger.info", "logger.debug"],
   external: [...Object.keys(pkg.dependencies), ...builtinModules],
   outfile: "dist/server.js",
 }).catch(() => process.exit(1)); 

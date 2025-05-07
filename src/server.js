@@ -4,6 +4,7 @@
  */
 import dotenv from "dotenv";
 import Fastify from "fastify";
+import fs from "node:fs"; // Changed to double quotes
 
 import fastifyCors from "@fastify/cors"; // Added
 import fastifyHelmet from "@fastify/helmet"; // Added
@@ -40,16 +41,21 @@ if (useHttp2) {
   if (process.env.K_SERVICE) {
     logger.info("Fastify configured with HTTP/2 cleartext (h2c) for Cloud Run");
   } else {
-    // Local/dev: require key & cert for secure HTTP/2
-    if (!process.env.HTTP2_KEY_PATH || !process.env.HTTP2_CERT_PATH) {
-      logger.error("HTTP2 enabled locally but HTTP2_KEY_PATH or HTTP2_CERT_PATH not set");
+    // Local/dev: use mkcert-generated key & cert for secure HTTP/2
+    // Assumes localhost+2-key.pem and localhost+2.pem are in the same directory as this script (src/)
+    // Or adjust path.resolve as needed if they are in project root: path.resolve(__dirname, "../localhost+2-key.pem")
+    const keyPath = "./localhost+2-key.pem"; // Changed to double quotes, relative to src/
+    const certPath = "./localhost+2.pem"; // Changed to double quotes, relative to src/
+
+    if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
+      logger.error(`HTTP/2 enabled locally but key/cert files not found at ${keyPath} or ${certPath}. Please ensure they are in the src/ directory or adjust paths.`);
       process.exit(1);
     }
     fastifyOptions.https = {
-      key: fs.readFileSync(process.env.HTTP2_KEY_PATH),
-      cert: fs.readFileSync(process.env.HTTP2_CERT_PATH)
+      key: fs.readFileSync(keyPath),
+      cert: fs.readFileSync(certPath)
     };
-    logger.info("Fastify configured with HTTP/2+TLS");
+    logger.info("Fastify configured with HTTP/2+TLS using mkcert files.");
   }
 }
 

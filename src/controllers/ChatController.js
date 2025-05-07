@@ -340,11 +340,17 @@ class ChatController {
       // Set headers optimized for streaming
       reply.header("Content-Type", "text/event-stream");
       reply.header("Cache-Control", "no-cache, no-transform");
-      reply.header("Connection", "keep-alive");
       reply.header("X-Accel-Buffering", "no"); // Prevent nginx buffering
-      reply.header("Transfer-Encoding", "chunked"); // Enable chunked encoding
-      // Echo the client requestId for stop calls
-      reply.header("X-Request-ID", requestId);
+      reply.header("X-Request-ID", requestId); // Echo the client requestId for stop calls
+
+      // Conditionally set HTTP/1.1 specific headers
+      if (request.raw.httpVersion && request.raw.httpVersion.startsWith("1.")) {
+        reply.header("Connection", "keep-alive");
+        reply.header("Transfer-Encoding", "chunked");
+        logger.debug("HTTP/1.1 detected, setting Connection and Transfer-Encoding headers for stream.");
+      } else {
+        logger.debug(`HTTP/2 or newer detected (${request.raw.httpVersion}), skipping HTTP/1.1 specific stream headers.`);
+      }
       
       // Send the stream to the client and disable Nagle for low-latency
       reply.send(stream);
