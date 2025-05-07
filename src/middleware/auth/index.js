@@ -49,18 +49,17 @@ export function authenticateUser() {
  * @returns {Function} Fastify middleware function
  */
 export function requireAuth() {
-  return async (request, reply) => {
+  return async (request) => {
     authStats.totalRequests++;
     request.user = null;
     const authHeader = request.headers.authorization;
     
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       logger.debug("Authentication required but no token provided");
-      reply.status(401).send({ 
-        error: "Authentication required", 
-        message: "You must provide a valid authentication token" 
-      });
-      return reply;
+      const err = new Error("You must provide a valid authentication token");
+      err.name = "AuthenticationError";
+      err.statusCode = 401;
+      throw err;
     }
     
     const idToken = authHeader.split("Bearer ")[1];
@@ -69,22 +68,20 @@ export function requireAuth() {
       
       if (!request.user) {
         logger.debug("Authentication failed - token verification returned null");
-        reply.status(401).send({ 
-          error: "Authentication failed", 
-          message: "Invalid or expired authentication token" 
-        });
-        return reply;
+        const err = new Error("Invalid or expired authentication token");
+        err.name = "AuthenticationError";
+        err.statusCode = 401;
+        throw err;
       }
       
       logger.debug(`Authenticated required route for user: ${request.user.uid}`);
     } catch (error) {
       authStats.verificationFailures++;
       logger.warn(`Token verification failed in requireAuth: ${error.message}`);
-      reply.status(401).send({
-        error: "Authentication failed",
-        message: "Token verification failed: " + error.message
-      });
-      return reply;
+      const err = new Error("Token verification failed: " + error.message);
+      err.name = "AuthenticationError";
+      err.statusCode = 401;
+      throw err;
     }
   };
 }
@@ -100,19 +97,17 @@ export function requireRole(roles) {
     const authMiddleware = requireAuth();
     await authMiddleware(request, reply);
     
-    // If authentication failed and reply was already sent, exit
-    if (reply.sent) {return reply;}
+    // If authentication failed, it will have thrown, so we arrive here only if authorized.
     
     // Then check roles
     const hasRequiredRole = authService.hasRole(request.user, roles);
     
     if (!hasRequiredRole) {
       logger.debug(`Authorization failed - user lacks required role(s): ${roles}`);
-      reply.status(403).send({ 
-        error: "Unauthorized", 
-        message: "You don't have permission to access this resource" 
-      });
-      return reply;
+      const err = new Error("You don't have permission to access this resource");
+      err.name = "ForbiddenError";
+      err.statusCode = 403;
+      throw err;
     }
     
     logger.debug(`Authorized user ${request.user.uid} with role(s): ${roles}`);

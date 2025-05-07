@@ -27,12 +27,33 @@ dotenv.config({ override: false }); // Load .env but don't override existing env
 // Record process start time for measuring cold start duration
 const coldStartStart = Date.now();
 
-// Create Fastify application
-// const app = express(); // Removed
-const fastify = Fastify({
+// Create Fastify application with optional HTTP/2 support
+const useHttp2 = process.env.HTTP2_ENABLED === "true";
+const fastifyOptions = {
   logger: true,
   bodyLimit: chatBodyLimit // Set the global body limit here
-}); // Added (with logger)
+};
+
+if (useHttp2) {
+  fastifyOptions.http2 = true;
+  // In Cloud Run, TLS is terminated by the platform; use h2c without certs
+  if (process.env.K_SERVICE) {
+    logger.info("Fastify configured with HTTP/2 cleartext (h2c) for Cloud Run");
+  } else {
+    // Local/dev: require key & cert for secure HTTP/2
+    if (!process.env.HTTP2_KEY_PATH || !process.env.HTTP2_CERT_PATH) {
+      logger.error("HTTP2 enabled locally but HTTP2_KEY_PATH or HTTP2_CERT_PATH not set");
+      process.exit(1);
+    }
+    fastifyOptions.https = {
+      key: fs.readFileSync(process.env.HTTP2_KEY_PATH),
+      cert: fs.readFileSync(process.env.HTTP2_CERT_PATH)
+    };
+    logger.info("Fastify configured with HTTP/2+TLS");
+  }
+}
+
+const fastify = Fastify(fastifyOptions);
 const PORT = process.env.PORT || 8080;
 
 

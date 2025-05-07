@@ -4,6 +4,8 @@
  */
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import axios from "axios";
+import http from "http";
+import https from "https";
 import BaseProvider from "./BaseProvider.js";
 import { createBreaker } from "../utils/circuitBreaker.js";
 import * as metrics from "../utils/metrics.js";
@@ -13,6 +15,10 @@ import logger from "../utils/logger.js";
 
 // Helper to check if a string is a base64 data URL
 const isBase64DataUrl = (str) => /^data:image\/(?:jpeg|png|gif|webp);base64,/.test(str);
+
+// Keep-alive agents to reuse HTTP connections
+const keepAliveHttpAgent = new http.Agent({ keepAlive: true });
+const keepAliveHttpsAgent = new https.Agent({ keepAlive: true });
 
 class GeminiProvider extends BaseProvider {
   /**
@@ -36,8 +42,17 @@ class GeminiProvider extends BaseProvider {
     this.apiVersion = config.apiVersion || process.env.GEMINI_API_VERSION || "v1beta";
     // logger.info(`Using Gemini API version: ${this.apiVersion}`);
     
-    // Initialize Google Generative AI SDK
-    this.genAI = new GoogleGenerativeAI(config.apiKey);
+    // Initialize Google Generative AI SDK with gRPC keepalive options to extend session idle timeout
+    this.genAI = new GoogleGenerativeAI(
+      config.apiKey,
+      {
+        channelOptions: {
+          "grpc.keepalive_time_ms": config.grpcKeepaliveTimeMs || 30000,
+          "grpc.keepalive_timeout_ms": config.grpcKeepaliveTimeoutMs || 10000,
+          "grpc.keepalive_permit_without_calls": 1
+        }
+      }
+    );
     
     // Extract API version info
     this.apiVersionInfo = {
@@ -74,12 +89,10 @@ class GeminiProvider extends BaseProvider {
           const baseUrl = `https://generativelanguage.googleapis.com/${this.apiVersion}`;
           
           const response = await axios.get(`${baseUrl}/models`, {
-            headers: {
-              "Content-Type": "application/json"
-            },
-            params: {
-              key: apiKey
-            }
+            headers: { "Content-Type": "application/json" },
+            params: { key: apiKey },
+            httpAgent: keepAliveHttpAgent,
+            httpsAgent: keepAliveHttpsAgent
           });
           
           // Dump raw Gemini models list to file
@@ -213,7 +226,10 @@ class GeminiProvider extends BaseProvider {
       // Directly use Axios to call the models API
       const apiKey = this.config.apiKey;
       const response = await axios.get(`https://generativelanguage.googleapis.com/${this.apiVersion}/models`, {
-        params: { key: apiKey }
+        headers: { "Content-Type": "application/json" },
+        params: { key: apiKey },
+        httpAgent: keepAliveHttpAgent,
+        httpsAgent: keepAliveHttpsAgent
       });
 
       // Process response

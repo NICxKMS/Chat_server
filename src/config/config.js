@@ -44,6 +44,8 @@ const defaultConfig = {
       models: ["gemini-1.5-flash", "gemini-1.5-pro"],
       defaultModel: "gemini-1.5-flash",
       dynamicModelLoading: true,
+      grpcKeepaliveTimeMs: parseInt(process.env.GEMINI_GRPC_KEEPALIVE_TIME_MS || "30000", 10),
+      grpcKeepaliveTimeoutMs: parseInt(process.env.GEMINI_GRPC_KEEPALIVE_TIMEOUT_MS || "10000", 10),
       apiVersion: process.env.GEMINI_API_VERSION || "v1beta"
     },
     openrouter: {

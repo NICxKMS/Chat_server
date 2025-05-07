@@ -78,7 +78,7 @@ export default function fastifyErrorHandler(error, request, reply) {
   logger.error("API Error Handled", logContext);
 
   // Check if response has already been sent using reply.sent
-  if (reply.sent) {
+  if (reply.sent || (reply.raw && reply.raw.headersSent)) {
     logger.warn("Reply already sent, cannot send error response.", { path: request.raw.url });
     return; // Don't attempt to send again
   }

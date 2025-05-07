@@ -9,6 +9,39 @@ import { ModelClassificationService } from "../services/ModelClassificationServi
 import { createBreaker } from "../utils/circuitBreaker.js";
 import logger from "../utils/logger.js";
 
+// Hardcoded fallback categories to avoid re-allocating on each request
+const FALLBACK_CATEGORIES = [
+  {
+    name: "Latest & Greatest",
+    providers: [
+      {
+        name: "openai",
+        models: [
+          { name: "gpt-4o", isExperimental: false },
+          { name: "gpt-4-turbo", isExperimental: false },
+          { name: "gpt-4", isExperimental: false }
+        ]
+      },
+      {
+        name: "anthropic",
+        models: [
+          { name: "claude-3-opus", isExperimental: false },
+          { name: "claude-3-sonnet", isExperimental: false },
+          { name: "claude-3-haiku", isExperimental: false }
+        ]
+      },
+      {
+        name: "google",
+        models: [
+          { name: "gemini-1.5-pro", isExperimental: false },
+          { name: "gemini-1.5-flash", isExperimental: false },
+          { name: "gemini-1.0-pro", isExperimental: false }
+        ]
+      }
+    ]
+  }
+];
+
 class ModelController {
   constructor() {
     // Bind methods (consider if still necessary with Fastify style)
@@ -200,41 +233,9 @@ class ModelController {
         return await this.getClassifiedModels(request, reply); // Assuming getClassifiedModels is adapted
       }
       
-      // Fallback: If classification service is not available, return hardcoded sample data.
+      // Fallback: return pre-defined sample categories
       logger.warn("Classification service disabled or unavailable, returning hardcoded sample categories.");
-      const categories = [
-        {
-          name: "Latest & Greatest",
-          providers: [
-            {
-              name: "openai",
-              models: [
-                { name: "gpt-4o", isExperimental: false },
-                { name: "gpt-4-turbo", isExperimental: false },
-                { name: "gpt-4", isExperimental: false }
-              ]
-            },
-            {
-              name: "anthropic",
-              models: [
-                { name: "claude-3-opus", isExperimental: false },
-                { name: "claude-3-sonnet", isExperimental: false },
-                { name: "claude-3-haiku", isExperimental: false }
-              ]
-            },
-            {
-              name: "google",
-              models: [
-                { name: "gemini-1.5-pro", isExperimental: false },
-                { name: "gemini-1.5-flash", isExperimental: false },
-                { name: "gemini-1.0-pro", isExperimental: false }
-              ]
-            }
-          ]
-        }
-      ];
-      
-      return reply.send(categories);
+      return reply.send(FALLBACK_CATEGORIES);
 
     } catch (error) {
       logger.error(`Error getting categorized models: ${error.message}`, { stack: error.stack });

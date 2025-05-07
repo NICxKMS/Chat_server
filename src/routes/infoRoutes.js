@@ -2,7 +2,7 @@
  * Info Routes Plugin
  * Provides general status, version, and test-auth endpoints under /api
  */
-export default async function infoRoutes(fastify, opts) {
+export default async function infoRoutes(fastify) {
   // Health of API (status)
   fastify.get("/status", (request, reply) => {
     reply.send({ status: "ok", timestamp: new Date().toISOString() });
@@ -17,12 +17,5 @@ export default async function infoRoutes(fastify, opts) {
     });
   });
 
-  // Test authentication
-  fastify.get("/test-auth", (request, reply) => {
-    const authenticated = Boolean(request.user);
-    if (authenticated) {
-      return reply.send({ authenticated: true, user: request.user });
-    }
-    return reply.send({ authenticated: false, message: "No user found. Authentication hook may not be running." });
-  });
+
 } 

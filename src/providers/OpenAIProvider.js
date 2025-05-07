@@ -374,149 +374,35 @@ class OpenAIProvider extends BaseProvider {
 
   /**
    * Send a chat completion request with streaming response (SSE).
-   * @param {object} options - Standardized request options.
-   * @yields {object} Standardized response chunks.
-   * @throws {Error} If API error occurs.
+   * Delegates to BaseProvider._streamViaGot for HTTP/2 + SSE parsing.
    */
   async *chatCompletionStream(options) {
-    let modelName;
-    let streamStartTime;
-    try {
-      // Standardize and validate options
-      const standardOptions = this.standardizeOptions(options);
-      this.validateOptions(standardOptions);
-
-      // Extract model name
-      modelName = standardOptions.model.includes("/")
-        ? standardOptions.model.split("/")[1]
-        : standardOptions.model;
-
-      // Process messages for potential multimodal content
-      const processedMessages = this._processMessagesForOpenAI(standardOptions.messages);
-
-      // Prepare the payload for streaming
-      const payload = {
-        model: modelName,
-        messages: processedMessages,
-        temperature: standardOptions.temperature,
-        max_completion_tokens: standardOptions.max_tokens,
-        stream_options: { include_usage: true },
-        stream: true,
-        // Include other optional parameters
-        ...(standardOptions.top_p !== undefined && { top_p: standardOptions.top_p }),
-        ...(standardOptions.frequency_penalty !== undefined && { frequency_penalty: standardOptions.frequency_penalty }),
-        ...(standardOptions.presence_penalty !== undefined && { presence_penalty: standardOptions.presence_penalty }),
-        ...(standardOptions.stop && { stop: standardOptions.stop }),
-        ...(standardOptions.response_format?.type === "json_object" && { response_format: { type: "json_object" } })
-      };
-
-      // logger.debug({ openAIStreamPayload: payload }, "Sending stream request to OpenAI");
-      streamStartTime = Date.now();
-
-      // Use the OpenAI SDK's streaming method
-      const stream = await this.client.chat.completions.create(
-        payload,
-        { signal: standardOptions.abortSignal }
-      );
-
-      let firstChunk = true;
-      let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }; // Initialize usage
-      let finishReason = "unknown"; // Initialize finish reason
-      let finalChunkProcessed = false;
-
-      for await (const chunk of stream) {
-        const chunkLatency = firstChunk ? Date.now() - streamStartTime : 0;
-
-        if (firstChunk) {
-          // Convert latency to seconds for the metrics function
-          metrics.recordStreamTtfb(this.name, modelName, chunkLatency / 1000); 
-          firstChunk = false;
-        }
-
-        // Extract usage and finish reason if available in the chunk
-        // OpenAI stream chunks typically contain delta content, but the final chunk might have full usage/finish_reason.
-        // Sometimes usage/finish reason might be on the `.x_stream_final_response.usage` or similar experimental fields.
-
-        // Prioritize final response data if available (check varies by SDK version)
-        const finalResponse = chunk.x_stream_final_response; // Example check
-        if (finalResponse) {
-          if (finalResponse.usage) {
-            usage = { // Update with final accurate usage
-              promptTokens: finalResponse.usage.prompt_tokens || usage.promptTokens,
-              completionTokens: finalResponse.usage.completion_tokens || usage.completionTokens,
-              totalTokens: finalResponse.usage.total_tokens || usage.totalTokens
-            };
-          }
-          if (finalResponse.choices && finalResponse.choices[0]?.finish_reason) {
-            finishReason = finalResponse.choices[0].finish_reason;
-          }
-          finalChunkProcessed = true; // Mark that we got the final meta-data chunk
-        } else {
-          // For regular delta chunks, update based on the chunk data itself
-          const choice = chunk.choices?.[0];
-          if (choice?.finish_reason) {
-            finishReason = choice.finish_reason; // Update finish reason if present in a delta
-          }
-          // Usage might be harder to accumulate accurately from deltas alone
-          // We often rely on the final chunk or estimate based on content length.
-        }
-
-
-        const normalizedChunk = this._normalizeStreamChunk(chunk, modelName, chunkLatency, finishReason, usage);
-        if (normalizedChunk.content || normalizedChunk.finishReason !== "unknown" || normalizedChunk.toolCalls) { // Yield if there is content, tool calls, or a finish reason update
-          yield normalizedChunk;
-        }
-
+    const so = this.standardizeOptions(options);
+    this.validateOptions(so);
+    const modelName = so.model.includes("/") ? so.model.split("/")[1] : so.model;
+    const payload = {
+      model: modelName,
+      messages: this._processMessagesForOpenAI(so.messages),
+      temperature: so.temperature,
+      max_completion_tokens: so.max_tokens,
+      stream: true,
+      stream_options: { include_usage: true },
+      ...(so.top_p !== undefined && { top_p: so.top_p }),
+      ...(so.frequency_penalty !== undefined && { frequency_penalty: so.frequency_penalty }),
+      ...(so.presence_penalty !== undefined && { presence_penalty: so.presence_penalty }),
+      ...(so.stop && { stop: so.stop })
+    };
+    for await (const evt of this._streamViaGot("chat/completions", payload, so.abortSignal)) {
+      // Propagate LLM-sent error events
+      if (evt.event === "error") {
+        const errData = evt.data;
+        const err = new Error(errData.message || "LLM error");
+        err.code = errData.code || errData.type;
+        throw err;
       }
-
-      // logger.info(`OpenAI stream completed for model ${modelName}. Finish Reason: ${finishReason}`);
-      // If the final metadata wasn't processed via an x_stream_final_response chunk,
-      // send one last meta-chunk if the finish reason is known.
-      if (!finalChunkProcessed && finishReason !== "unknown") {
-        yield {
-          id: `openai-final-${Date.now()}`,
-          model: modelName,
-          provider: this.name,
-          createdAt: new Date().toISOString(),
-          content: null,
-          usage: usage, // Send last known usage
-          latency: 0,
-          finishReason: finishReason,
-          raw: null
-        };
-      }
-
-
-    } catch (error) {
-      const streamLatency = streamStartTime ? Date.now() - streamStartTime : 0;
-      logger.error(`OpenAI stream error: ${error.message}`, { model: modelName, error });
-      let statusCode = 500;
-      if (error.status) {
-        statusCode = error.status;
-      }
-      metrics.incrementStreamErrorCount(this.name, modelName, statusCode.toString());
-
-      // Yield a final error chunk
-      yield {
-        id: `openai-stream-error-${Date.now()}`,
-        model: modelName,
-        provider: this.name,
-        error: {
-          message: `OpenAI stream error: ${error.message}`,
-          code: statusCode,
-          type: error.name || "ProviderStreamError"
-        },
-        finishReason: "error",
-        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-        latency: streamLatency
-      };
-      // throw error; // Option to rethrow
-
-    } finally {
-      if (streamStartTime) {
-        const durationSeconds = (Date.now() - streamStartTime) / 1000;
-        metrics.recordStreamDuration(this.name, modelName, durationSeconds);
-      }
+      const chunk = evt.data;
+      const normalized = this._normalizeStreamChunk(chunk, modelName, 0, "unknown", {});
+      yield normalized;
     }
   }
 

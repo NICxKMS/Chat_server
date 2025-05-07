@@ -59,7 +59,6 @@ export function withCache(originalMethod, modelController) {
         logger.info(`Using cached model classification data for user ${userId}`);
         
         // Send cached data to client IMMEDIATELY
-        reply.send(cachedData.data);
         
         // AFTER sending response, start background refresh without blocking
         runInBackground(async () => {
@@ -85,7 +84,8 @@ export function withCache(originalMethod, modelController) {
           }
         }, "refresh-cache");
         
-        return;
+        return reply.send(cachedData.data);
+
       }
       
       // No cache found, call original method

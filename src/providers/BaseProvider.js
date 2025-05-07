@@ -3,6 +3,12 @@
  * Defines the interface that all AI provider implementations must follow
  */
 
+// Add imports for HTTP/2 client and SSE parsing
+import got from "got";
+import { Agent as Http2Agent } from "http2-wrapper";
+import { createParser } from "eventsource-parser";
+import * as metrics from "../utils/metrics.js";
+
 class BaseProvider {
   /**
    * Create a new provider
@@ -18,6 +24,26 @@ class BaseProvider {
       version: "v1",
       lastUpdated: new Date().toISOString()
     };
+
+    // Shared HTTP/2 client for streaming calls with persistent session
+    const http2Agent = new Http2Agent({ keepAlive: true });
+    const gotOptions = {
+      http2: true,
+      agent: { http2: http2Agent },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`
+      },
+      responseType: "text",
+      throwHttpErrors: false
+    };
+    if (config.baseUrl) {
+      // Remove trailing slashes from baseUrl
+      gotOptions.prefixUrl = config.baseUrl.replace(/\/+$/g, "");
+    }
+    this.http2Client = got.extend(gotOptions);
+    // Track HTTP/2 session reuse
+    this._lastHttp2Session = null;
   }
 
   /**
@@ -133,6 +159,78 @@ class BaseProvider {
         throw new Error(`Message at index ${index} must have role and content properties`);
       }
     });
+  }
+
+  /**
+   * Parse a Server-Sent Events (SSE) stream into JSON objects.
+   * @param {ReadableStream<Buffer>} stream - Incoming SSE data stream.
+   * @returns {AsyncGenerator<any>} Yields parsed JSON event data objects.
+   */
+  async *_parseSSE(stream) {
+    const parserQueue = [];
+    const parser = createParser(event => {
+      if (event.type === "event") {
+        parserQueue.push({ eventName: event.event, data: event.data });
+      }
+    });
+    for await (const chunk of stream) {
+      parser.feed(chunk.toString());
+      while (parserQueue.length > 0) {
+        const { eventName, data: dataStr } = parserQueue.shift();
+        let parsed;
+        try {
+          parsed = JSON.parse(dataStr);
+        } catch {
+          continue; // skip unparsable
+        }
+        yield { event: eventName, data: parsed };
+      }
+    }
+  }
+
+  /**
+   * Generic SSE POST over HTTP/2 using got + eventsource-parser.
+   * Yields parsed JSON chunks.
+   */
+  async *_streamViaGot(path, payload, signal) {
+    const start = Date.now();
+    const stream = this.http2Client.stream(path, {
+      method: "POST",
+      body: JSON.stringify(payload),
+      signal,
+    });
+    // Log HTTP/2 version and session reuse on first headers
+    stream.once("response", () => {
+      // console.log(`LLM call to ${path} via HTTP/${res.httpVersion}`);
+      const currSession = stream.session;
+      // console.log(`Session reused: ${currSession === this._lastHttp2Session}`);
+      this._lastHttp2Session = currSession;
+      // Immediately send an HTTP/2 PING to mark session active
+      currSession.ping(() => {});
+      // Schedule periodic PINGs every 30 seconds to keep session alive
+      const pingInterval = setInterval(() => {
+        currSession.ping(() => {});
+      }, 30000);
+      // Stop pinging after 3 minutes from first response
+      const pingTimeout = setTimeout(() => {
+        clearInterval(pingInterval);
+      }, 180000);
+      // Clear the interval and timeout when the session closes
+      currSession.once("close", () => {
+        clearInterval(pingInterval);
+        clearTimeout(pingTimeout);
+      });
+    });
+    let first = true;
+    for await (const data of this._parseSSE(stream)) {
+      if (first) {
+        metrics.recordStreamTtfb(this.name, payload.model, (Date.now() - start) / 1000);
+        first = false;
+      }
+      yield data;
+    }
+    // record overall duration
+    metrics.recordStreamDuration(this.name, payload.model, (Date.now() - start) / 1000);
   }
 }
 

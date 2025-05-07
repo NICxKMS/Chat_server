@@ -7,6 +7,7 @@ import * as cache from "../utils/cache.js";
 import * as metrics from "../utils/metrics.js";
 import { getCircuitBreakerStates } from "../utils/circuitBreaker.js";
 import logger from "../utils/logger.js";
+import { PassThrough } from "stream";
 
 // Helper function to roughly validate base64 (more robust checks might be needed)
 
@@ -46,16 +47,8 @@ class ChatController {
     try {
       metrics.incrementRequestCount();
       
-      // Use request.body - add extraction of top_p, frequency_penalty, and presence_penalty
-      const { model, messages, temperature = 0.7, max_tokens = 1000, top_p, frequency_penalty, presence_penalty, nocache } = request.body;
-      
-      if (!model) {
-        return reply.status(400).send({ error: "Missing required parameter: model" });
-      }
-      
-      if (!Array.isArray(messages) || messages.length === 0) {
-        return reply.status(400).send({ error: "Missing or invalid messages array" });
-      }
+      // Extract all validated/coerced body properties (validation done by Fastify schema)
+      const { model, messages, temperature, max_tokens, top_p, frequency_penalty, presence_penalty, nocache } = request.body;
       
       // Extract provider name and model name
       const separatorIndex = model.indexOf("/");
@@ -84,6 +77,10 @@ class ChatController {
       
       // Echo the requestId back for consistency
       reply.header("X-Request-ID", requestId);
+      // Disable Nagle for low-latency small responses
+      if (reply.raw.socket && typeof reply.raw.socket.setNoDelay === "function") {
+        reply.raw.socket.setNoDelay(true);
+      }
       
       // Cache check logic 
       try {
@@ -109,19 +106,18 @@ class ChatController {
         logger.warn(`Failed to check cache status: ${cacheCheckError.message}. Continuing without cache.`);
       }
       
-      // Prepare options - include optional parameters only if they exist
+      // Prepare options with validated/coerced values
       const options = {
         model: modelName,
         messages,
-        temperature: parseFloat(temperature?.toString() || "0.7"),
-        max_tokens: parseInt(max_tokens?.toString() || "1000", 10),
+        temperature,
+        max_tokens,
         abortSignal: abortController.signal
       };
-      
-      // Add optional parameters only if they exist in the request
-      if (top_p !== undefined) {options.top_p = parseFloat(top_p);}
-      if (frequency_penalty !== undefined) {options.frequency_penalty = parseFloat(frequency_penalty);}
-      if (presence_penalty !== undefined) {options.presence_penalty = parseFloat(presence_penalty);}
+      // Add optional parameters
+      if (top_p !== undefined) { options.top_p = top_p; }
+      if (frequency_penalty !== undefined) { options.frequency_penalty = frequency_penalty; }
+      if (presence_penalty !== undefined) { options.presence_penalty = presence_penalty; }
       
       try {
         // Send request to provider (unchanged)
@@ -264,8 +260,12 @@ class ChatController {
     activeGenerations.set(requestId, abortController);
 
     // Create a PassThrough stream with a low highWaterMark for immediate flushing
-    const { PassThrough } = await import("node:stream");
-    const stream = new PassThrough({ 
+    // const { PassThrough } = await import("node:stream");
+    // Required time about<1ms to let server finish setup of i dont know what to work correctly
+    await new Promise(resolve => setImmediate(resolve));
+
+
+    const stream = new PassThrough({
       highWaterMark: 1,  // Use smallest highWaterMark to ensure immediate chunk delivery
       autoDestroy: true  // Automatically destroy when finished
     });
@@ -314,17 +314,9 @@ class ChatController {
     try {
       metrics.incrementRequestCount();
       
-      // Use request.body - add extraction of top_p, frequency_penalty, and presence_penalty
-      const { model, messages, temperature = 0.7, max_tokens = 1000, top_p, frequency_penalty, presence_penalty } = request.body;
+      // Extract all validated/coerced body properties (validation done by Fastify schema)
+      const { model, messages, temperature, max_tokens, top_p, frequency_penalty, presence_penalty } = request.body;
       
-      if (!model) {
-        return reply.status(400).send({ error: "Missing required parameter: model" });
-      }
-      
-      if (!Array.isArray(messages) || messages.length === 0) {
-        return reply.status(400).send({ error: "Missing or invalid messages array" });
-      }
-
       // Extract provider name and model name
       const separatorIndex = model.indexOf("/");
       if (separatorIndex !== -1) { // Check if "/" exists
@@ -354,8 +346,15 @@ class ChatController {
       // Echo the client requestId for stop calls
       reply.header("X-Request-ID", requestId);
       
-      // Send the stream to the client
+      // Send the stream to the client and disable Nagle for low-latency
       reply.send(stream);
+      // Flush HTTP headers immediately to reduce latency
+      if (typeof reply.raw.flushHeaders === "function") {
+        reply.raw.flushHeaders();
+      }
+      if (reply.raw.socket && typeof reply.raw.socket.setNoDelay === "function") {
+        reply.raw.socket.setNoDelay(true);
+      }
       lastActivityTime = Date.now();
 
       // Set up heartbeat interval
@@ -383,19 +382,18 @@ class ChatController {
         abortController.abort();
       });
 
-      // Prepare options - include additional parameters
+      // Prepare options with validated/coerced values
       const options = {
         model: modelName,
         messages,
-        temperature: parseFloat(temperature?.toString() || "0.7"),
-        max_tokens: parseInt(max_tokens?.toString() || "1000", 10),
-        abortSignal: abortController.signal,
+        temperature,
+        max_tokens,
+        abortSignal: abortController.signal
       };
-      
-      // Add optional parameters only if they exist in the request
-      if (top_p !== undefined) {options.top_p = parseFloat(top_p);}
-      if (frequency_penalty !== undefined) {options.frequency_penalty = parseFloat(frequency_penalty);}
-      if (presence_penalty !== undefined) {options.presence_penalty = parseFloat(presence_penalty);}
+      // Add optional parameters
+      if (top_p !== undefined) { options.top_p = top_p; }
+      if (frequency_penalty !== undefined) { options.frequency_penalty = frequency_penalty; }
+      if (presence_penalty !== undefined) { options.presence_penalty = presence_penalty; }
 
       // Get provider stream
       const providerStream = provider.chatCompletionStream(options);
@@ -411,7 +409,7 @@ class ChatController {
           metrics.recordStreamTtfb(providerName, modelName, ttfbSeconds);
           ttfbRecorded = true;
         }
-        metrics.incrementStreamChunkCount(providerName, modelName);
+        // metrics.incrementStreamChunkCount(providerName, modelName);
 
         const sseFormattedChunk = `data: ${JSON.stringify(chunk)}\n\n`;
         // logger.debug(`[SSE SENT] Chunk ${chunkCounter} for ${providerName}/${modelName}`, { sseChunk: sseFormattedChunk }); // REMOVING THIS
@@ -459,7 +457,7 @@ class ChatController {
         }
         
         safelyEndStream(`Stream aborted for ${providerName}/${modelName}`, "client_abort");
-        return; // Exit early
+        return; // Exit early on abort
       }
       
       const errorType = "provider_error";
@@ -467,28 +465,21 @@ class ChatController {
       // Check if headers have been sent
       if (!reply.raw.headersSent && !streamClosed) {
         // Headers not sent, we can use reply to send a JSON error
-        streamClosed = true; 
+        streamClosed = true;
         if (heartbeatInterval) { clearInterval(heartbeatInterval); }
         if (timeoutCheckInterval) { clearInterval(timeoutCheckInterval); }
-        
+
         // Determine appropriate status code from error if possible
         const statusCode = error.status || 500;
         reply.status(statusCode)
-          .type("application/json") // Explicitly set content type
-          .send(JSON.stringify({  // Explicitly stringify
-            error: "Stream processing error", 
-            message: error.message 
-          }));
-        
-        // Record error metric
-        if (providerName && modelName) {
-          metrics.incrementStreamErrorCount(providerName, modelName, errorType);
-        }
-        
-        // Remove from active generations
-        activeGenerations.delete(requestId);
+          .type("application/json")
+          .send({
+            error: "Stream processing error",
+            message: error.message
+          });
+        return;
       } else if (!streamClosed && !stream.writableEnded) {
-        // Headers ARE sent, try to send a structured error event over the stream
+        // SSE error event branch
         const errorPayload = {
           code: error.code || error.name || "ProviderStreamError",
           message: error.message || "An error occurred during streaming.",
@@ -506,6 +497,9 @@ class ChatController {
           safelyEndStream(`Failed to send error to client for ${providerName}/${modelName}`, errorType);
         }
       }
+    } finally {
+      // Always clean up active generation slot on exit
+      activeGenerations.delete(requestId);
     }
   }
 
@@ -518,12 +512,6 @@ class ChatController {
   async stopGeneration(request, reply) {
     try {
       const { requestId } = request.body;
-      
-      if (!requestId) {
-        return reply.status(400).send({ 
-          error: "Missing required parameter: requestId" 
-        });
-      }
       
       // Look up the abort controller (idempotent stop)
       const abortController = activeGenerations.get(requestId);

@@ -12,29 +12,24 @@ async function modelRoutes (fastify) {
   // GET / - Get all models from all providers
   fastify.get("/", modelController.getAllModels);
 
-  // // GET /models/list - REMOVED ALIAS
-  // router.get('/list', modelController.getAllModels.bind(modelController));
+
 
   // GET /categories - Get models categorized for dropdown UI
   fastify.get("/categories", modelController.getCategorizedModels);
 
-  // // GET /models/categorized - REMOVED ALIAS
-  // router.get('/categorized', modelController.getCategorizedModels.bind(modelController));
 
   // GET /providers - Get all providers and their capabilities
   fastify.get("/providers", modelController.getProviders);
 
-  // // GET /models/capabilities/all - REMOVED ALIAS
-  // router.get('/capabilities/all', modelController.getProviderCapabilities.bind(modelController));
 
   // GET /classified - Get models classified by external service
-  fastify.get("/classified", (request, reply) => {
+  fastify.get("/classified", async (request, reply) => {
     logger.debug("=========== MODEL CLASSIFIED ROUTE ===========");
     logger.debug(`Request user: ${JSON.stringify(request.user)}`);
     logger.debug(`Auth header: ${request.headers.authorization ? "Present" : "Not present"}`);
     
-    // Continue to controller
-    modelController.getClassifiedModels(request, reply);
+    // Delegate to controller and return its promise
+    return modelController.getClassifiedModels(request, reply);
   });
 
   // GET /classified/criteria - Get models classified with specific criteria
