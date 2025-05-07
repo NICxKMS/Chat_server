@@ -13,7 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Path to proto file
-const PROTO_PATH = path.resolve(__dirname, "../protos/models.proto");
+const PROTO_PATH = path.resolve(__dirname, "./protos/models.proto");
 
 // Proto loader options - enhanced for better compatibility with Go server
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
