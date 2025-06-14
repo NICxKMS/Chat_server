@@ -644,14 +644,23 @@ class GeminiProvider extends BaseProvider {
       );
 
     } catch (error) {
+      // Do not treat aborts as real errors
+      if (
+        options.abortSignal?.aborted ||
+        error.name === "AbortError" ||
+        error.type === "aborted" ||
+        (error.message && /aborted|canceled|reading from the stream/i.test(error.message))
+      ) {
+        // Optionally log at debug level
+        logger.debug(`Gemini stream aborted: ${error.message}`);
+        return;
+      }
+      // Genuine error: log and increment metrics
       logger.error(`Gemini stream error: ${error.message}`, error);
       if (modelName) {
         metrics.incrementProviderErrorCount(this.name, modelName, error.status || 500);
       }
-      // Rethrow abort errors silently
-      if (error.name === "AbortError") {
-        return;
-      }
+      // Propagate as new Error for upstream handling
       throw new Error(`Gemini stream error: ${error.message}`);
     }
   }

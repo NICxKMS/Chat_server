@@ -18,49 +18,66 @@ class ProviderFactory {
    * Initialize the provider factory
    */
   constructor() {
-    try {
-      // Initialize provider instances
-      this.providers = this._initializeProviders();
+    // Store raw configs for lazy instantiation
+    this.configs = {
+      openai: config.providers.openai || {},
+      anthropic: config.providers.anthropic || {},
+      gemini: config.providers.gemini || {},
+      openrouter: config.providers.openrouter || {}
+    };
+    this.providers = {}; // Instance cache
+    // Determine available provider names by API key presence
+    const available = Object.entries(this.configs)
+      .filter(([, cfg]) => cfg.apiKey)
+      .map(([name]) => name);
+    // Select default by priority
+    if (available.includes("openai")) this.defaultProvider = "openai";
+    else if (available.includes("anthropic")) this.defaultProvider = "anthropic";
+    else if (available.includes("gemini")) this.defaultProvider = "gemini";
+    else if (available.includes("openrouter")) this.defaultProvider = "openrouter";
+    else this.defaultProvider = available[0] || "none";
+    // Eagerly instantiate all configured providers
+    available.forEach(name => this._instantiateProvider(name));
+    // Ensure a fallback 'none' provider exists if no providers initialized
+    if (Object.keys(this.providers).length === 0) {
+      this._instantiateProvider("none");
+    }
+  }
 
-      // Find a valid default provider
-      const availableProviders = Object.keys(this.providers);
-      if (availableProviders.includes("openai")) {
-        this.defaultProvider = "openai";
-      } else if (availableProviders.includes("anthropic")) {
-        this.defaultProvider = "anthropic";
-      } else if (availableProviders.includes("gemini")) {
-        this.defaultProvider = "gemini";
-      } else if (availableProviders.includes("openrouter")) {
-        this.defaultProvider = "openrouter";
-      } else {
-        this.defaultProvider = availableProviders[0] || "none";
-        logger.warn(`No primary providers found, using ${this.defaultProvider} as default`);
-      }
-
-    } catch (error) {
-      logger.error("Error initializing provider factory:", error);
-      // Initialize with empty providers if there's an error
-      this.providers = {
-        none: {
-          name: "none",
-          getModels: async () => [],
-          config: { defaultModel: "none" }
-        }
-      };
-      this.defaultProvider = "none";
+  // Lazily instantiate providers on first use
+  _instantiateProvider(name) {
+    const cfg = this.configs[name] || {};
+    switch (name) {
+      case "openai":
+        this.providers.openai = new OpenAIProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: cfg.defaultModel, ...cfg });
+        break;
+      case "anthropic":
+        this.providers.anthropic = new AnthropicProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl || "https://api.anthropic.com", defaultModel: cfg.defaultModel, modelFamily: "claude", ...cfg });
+        break;
+      case "gemini":
+        this.providers.gemini = new GeminiProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: cfg.defaultModel, ...cfg });
+        break;
+      case "openrouter":
+        this.providers.openrouter = new OpenRouterProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: cfg.defaultModel, ...cfg });
+        break;
+      case "none":
+      default:
+        this.providers.none = { name: "none", getModels: async () => [], config: { defaultModel: "none" } };
     }
   }
 
   /**
-   * Get a provider by name
+   * Get or create a provider instance by name
    */
   getProvider(providerName) {
     const name = providerName || this.defaultProvider;
-
     if (!this.providers[name]) {
-      throw new Error(`Provider ${name} not found or not initialized`);
+      if (this.configs[name]?.apiKey || name === "none") {
+        this._instantiateProvider(name);
+      } else {
+        throw new Error(`Provider ${name} not found or not initialized`);
+      }
     }
-
     return this.providers[name];
   }
 
@@ -73,52 +90,27 @@ class ProviderFactory {
 
       // If provider name is specified, return info for that provider only
       if (providerName) {
-        if (!this.providers[providerName]) {
-          return {
-            [providerName]: {
-              models: [],
-              error: `Provider ${providerName} not found or not initialized`
-            }
-          };
-        }
-
-        // Get info for the specified provider
         try {
-          const provider = this.providers[providerName];
+          const provider = this.getProvider(providerName);
           const models = await provider.getModels();
-
-          results[providerName] = {
-            models: models,
-            defaultModel: provider.config.defaultModel
-          };
+          return { [providerName]: { models, defaultModel: provider.config.defaultModel } };
         } catch (error) {
-          results[providerName] = {
-            models: [],
-            error: `Failed to get models for ${providerName}: ${error.message}`
-          };
+          return { [providerName]: { models: [], error: `Failed to get models for ${providerName}: ${error.message}` } };
         }
-
-        return results;
       }
 
-      // Get info for all providers
-      const providerInfoPromises = Object.entries(this.providers).map(async ([name, provider]) => {
+      // Get info for all configured providers
+      const providerNames = Object.keys(this.configs).filter(name => this.configs[name]?.apiKey);
+      const infoPromises = providerNames.map(async name => {
         try {
+          const provider = this.getProvider(name);
           const models = await provider.getModels();
-
-          results[name] = {
-            models: models,
-            defaultModel: provider.config.defaultModel
-          };
+          results[name] = { models, defaultModel: provider.config.defaultModel };
         } catch (error) {
-          results[name] = {
-            models: [],
-            error: `Failed to get models for ${name}: ${error.message}`
-          };
+          results[name] = { models: [], error: `Failed to get models for ${name}: ${error.message}` };
         }
       });
-
-      await Promise.all(providerInfoPromises);
+      await Promise.all(infoPromises);
 
       return results;
       
@@ -144,74 +136,6 @@ class ProviderFactory {
    */
   hasProvider(providerName) {
     return !!this.providers[providerName];
-  }
-
-  /**
-   * Initialize provider instances
-   */
-  _initializeProviders() {
-    try {
-      // Get config values
-      const openaiConfig = config.providers.openai || {};
-      const anthropicConfig = config.providers.anthropic || {};
-      const geminiConfig = config.providers.gemini || {};
-      const openrouterConfig = config.providers.openrouter || {};
-
-      // Initialize provider object
-      const providers = {};
-
-      // Only initialize providers with valid API keys
-      if (openaiConfig.apiKey) {
-        providers.openai = new OpenAIProvider({
-          apiKey: openaiConfig.apiKey,
-          baseUrl: openaiConfig.baseUrl,
-          defaultModel: openaiConfig.defaultModel,
-          ...openaiConfig
-        });
-      }
-
-      if (anthropicConfig.apiKey) {
-        providers.anthropic = new AnthropicProvider({
-          apiKey: anthropicConfig.apiKey,
-          baseUrl: anthropicConfig.baseUrl || "https://api.anthropic.com",
-          defaultModel: anthropicConfig.defaultModel || "claude-3-opus-20240229",
-          modelFamily: "claude",
-          ...anthropicConfig
-        });
-      }
-
-      if (geminiConfig.apiKey) {
-        providers.gemini = new GeminiProvider({
-          apiKey: geminiConfig.apiKey,
-          baseUrl: geminiConfig.baseUrl,
-          defaultModel: geminiConfig.defaultModel,
-          ...geminiConfig
-        });
-      }
-
-      if (openrouterConfig.apiKey) {
-        providers.openrouter = new OpenRouterProvider({
-          apiKey: openrouterConfig.apiKey,
-          baseUrl: openrouterConfig.baseUrl,
-          defaultModel: openrouterConfig.defaultModel,
-          ...openrouterConfig
-        });
-      }
-
-      if (Object.keys(providers).length === 0) {
-        logger.warn("No providers were initialized due to missing API keys");
-        providers.none = {
-          name: "none",
-          getModels: async () => [],
-          config: { defaultModel: "none" }
-        };
-      }
-
-      return providers;
-    } catch (error) {
-      logger.error("Error initializing providers:", error);
-      throw error;
-    }
   }
 }
 

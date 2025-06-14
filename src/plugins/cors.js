@@ -10,7 +10,8 @@ export default async function corsPlugin(fastify) {
         "https://nicxkms.github.io/chat-api/",
         "https://nicxkms.github.io",
         "https://chat-8fh.pages.dev",
-        "http://localhost:8000"
+        "http://localhost:8000",
+        "http://localhost:5500/index.html"
       ];
       const allowedDomainPrefix = "nicxkms.github.io";
       const allowedDomainSuffix = ".chat-api-9ru.pages.dev";

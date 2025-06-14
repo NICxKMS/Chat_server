@@ -438,6 +438,10 @@ class OpenAIProvider extends BaseProvider {
         providerDetails: error.details,
         stack: error.stack
       });
+      // Silently exit on abort signals or related errors
+      if (so.abortSignal?.aborted || error.name === "AbortError" || (error.message && /aborted|canceled/i.test(error.message))) {
+        return;
+      }
       // Re-throw the error; it will be one of our custom errors or a generic Error
       // The ChatController will handle formatting it for the client.
       throw error;

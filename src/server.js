@@ -8,6 +8,9 @@ import { promises as fsPromises } from "node:fs"; // Use promises API
 
 import zlib from "node:zlib"; // For inline compression
 import mainApiRoutes from "./routes/index.js"; // Main plugin
+import cors from '@fastify/cors';
+import compress from '@fastify/compress';
+import helmet from '@fastify/helmet';
 
 import fastifyErrorHandler from "./middleware/errorHandler.js"; // Added error handler import
 import rateLimiterHook from "./middleware/rateLimiter.js"; // Hook import
@@ -101,57 +104,30 @@ const start = async () => {
       applyCaching(modelController);
     }
 
-    // Inline CORS handling using a whitelist of allowed origins
-    const allowedOrigins = [
+    // Register optimized plugins for CORS, security headers, and compression
+    const allowedOriginSet = new Set([
       "http://localhost:3001",
       "https://chat-api-9ru.pages.dev",
       "https://nicxkms.github.io/chat-api",
       "https://nicxkms.github.io",
       "https://chat-8fh.pages.dev",
       "http://localhost:8000",
-      "http://localhost:5000"
-    ];
-    fastify.addHook("onRequest", (request, reply, done) => {
-      const origin = request.headers.origin;
-      if (origin && allowedOrigins.includes(origin)) {
-        reply.header("Access-Control-Allow-Origin", origin);
-        reply.header("Vary", "Origin");
-      }
-      reply.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-      reply.header("Access-Control-Allow-Headers", "Content-Type,Authorization,Accept,Cache-Control,Connection,X-Requested-With,Range");
-      // Cache preflight response for 1 hour
-      reply.header("Access-Control-Max-Age", "3600");
-      if (request.raw.method === "OPTIONS") {
-        reply.status(204).send();
-      } else {
-        done();
-      }
+      "http://localhost:5500"
+    ]);
+    await fastify.register(cors, {
+      origin: (origin, cb) => cb(null, !origin || allowedOriginSet.has(origin)),
+      methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+      allowedHeaders: ['Content-Type','Authorization','Accept','Cache-Control','Connection','X-Requested-With','Range'],
+      maxAge: 3600
     });
-    // Inline minimal security headers (subset of Helmet)
-    fastify.addHook("onSend", (request, reply, payload, done) => {
-      reply.header("X-DNS-Prefetch-Control", "off");
-      reply.header("X-Frame-Options", "SAMEORIGIN");
-      reply.header("X-Download-Options", "noopen");
-      reply.header("X-Content-Type-Options", "nosniff");
-      reply.header("X-Permitted-Cross-Domain-Policies", "none");
-      done(null, payload);
+    await fastify.register(helmet, {
+      contentSecurityPolicy: false,
+      dnsPrefetchControl: false,
+      frameguard: { action: 'sameorigin' },
+      noSniff: true,
+      referrerPolicy: { policy: 'no-referrer' }
     });
-    // Inline basic compression for JSON/text payloads
-    fastify.addHook("onSend", (request, reply, payload, done) => {
-      const acceptEncoding = request.headers["accept-encoding"] || "";
-      const contentType = reply.getHeader("Content-Type") || "";
-      if (/\bgzip\b/.test(acceptEncoding) && /application\/json|text\//.test(contentType) && (typeof payload === "string" || Buffer.isBuffer(payload))) {
-        zlib.gzip(payload, (err, compressed) => {
-          if (err) {
-            return done(err);
-          }
-          reply.header("Content-Encoding", "gzip");
-          done(null, compressed);
-        });
-      } else {
-        done(null, payload);
-      }
-    });
+    await fastify.register(compress, { encodings: ['gzip'] });
 
     // Add Rate Limiter Hook
     if (config.rateLimiting?.enabled !== false) {
@@ -175,12 +151,7 @@ const start = async () => {
     // --- Register Error Handler ---
     fastify.setErrorHandler(fastifyErrorHandler);
 
-    // Warm up 'classified-models' cache before accepting real traffic
-    // if (useCache) {
-    // logger.info("Warming up 'classified-models' cache via Firestore...");
-    // await fastify.ready();
-    // const res = await fastify.inject({ method: "GET", url: "/api/models/classified" });
-    // }
+
 
     // --- Start Server ---
     await fastify.listen({ port: PORT, host: "0.0.0.0" });
@@ -193,16 +164,49 @@ const start = async () => {
   }
 };
 
-// Handle graceful shutdown
-const signals = ["SIGINT", "SIGTERM"];
-signals.forEach(signal => {
-  process.on(signal, async () => {
+// Graceful shutdown logic encapsulated in a single function
+let isShuttingDown = false;
+async function gracefulShutdown(signal) {
+  if (isShuttingDown) return; // Prevent multiple executions
+  isShuttingDown = true;
+
+  try {
     fastify.log.info(`${signal} received, shutting down gracefully`);
-    await fastify.close(); // Close the Fastify server
-    // Add any other cleanup logic here if needed
+
+    // Close Fastify (stops accepting new connections and waits for existing ones)
+    await fastify.close();
+
+    // Clean up Firebase Admin SDK connections, if initialised
+    try {
+      await admin.app().delete();
+      fastify.log.info("Firebase app deleted.");
+    } catch (err) {
+      // If app was not initialised or already deleted, ignore
+      fastify.log.debug("Firebase app delete skipped: ", err.message);
+    }
+
     fastify.log.info("Server closed.");
+  } catch (err) {
+    fastify.log.error("Error during shutdown: ", err);
+  } finally {
     process.exit(0);
-  });
+  }
+}
+
+// Listen for termination signals **once** so that duplicate signals (e.g. SIGINT twice) don't cause issues
+["SIGINT", "SIGTERM"].forEach(signal => {
+  process.once(signal, () => gracefulShutdown(signal));
+});
+
+// Catch unhandled promise rejections & uncaught exceptions to log errors but keep server running
+process.on("unhandledRejection", (reason, promise) => {
+  fastify.log.error("Unhandled Rejection at:", promise, "reason:", reason);
+  // Application continues running
+});
+
+process.on("uncaughtException", err => {
+  fastify.log.error("Uncaught Exception thrown:", err);
+  // Application continues running
 });
 
 start();

@@ -252,6 +252,7 @@ class ChatController {
     let lastProviderChunk = null;
 
     activeGenerations.set(requestId, abortController);
+    // Yield to the event loop to allow headers to flush before streaming
     await new Promise(resolve => setImmediate(resolve));
     const stream = new PassThrough({
       highWaterMark: 1,  // Use smallest highWaterMark to ensure immediate chunk delivery
