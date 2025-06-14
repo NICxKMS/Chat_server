@@ -14,7 +14,7 @@ export class ModelClassificationService {
    */
   constructor(serverAddress = "localhost:8080") {
     this.serverAddress = serverAddress;
-    this.client = protoUtils.createModelClassificationClient(serverAddress);
+    this.clientPromise = protoUtils.createModelClassificationClient(serverAddress);
   }
 
   /**
@@ -91,10 +91,12 @@ export class ModelClassificationService {
    * @param {object} providersInfo - Pre-fetched provider information.
    * @returns {Promise<object>} - Classified models
    */
-  async getClassifiedModels(providersInfo) { // Accept providersInfo as argument
+  async getClassifiedModels(providersInfo) {
     try {
+      // Await the async client creation
+      const client = await this.clientPromise;
       // Check if client is properly initialized
-      if (!this.client) {
+      if (!client) {
         logger.error("Classification client not initialized");
         throw new Error("Classification service client not initialized");
       }
@@ -118,7 +120,7 @@ export class ModelClassificationService {
           // } catch (writeError) {
           //   logger.error("[Debug] Error writing request body to req.json", { error: writeError.message });
           // }
-          this.client.classifyModels(modelList, (error, response) => {
+          client.classifyModels(modelList, (error, response) => {
             clearTimeout(timeout); // Clear timeout once callback is received
             
             if (error) {
@@ -175,8 +177,10 @@ export class ModelClassificationService {
    */
   async getModelsByCriteria(criteria) {
     try {
+      // Await the async client creation
+      const client = await this.clientPromise;
       // Check if client is properly initialized
-      if (!this.client) {
+      if (!client) {
         logger.error("Classification client not initialized");
         throw new Error("Classification service client not initialized");
       }
@@ -195,7 +199,7 @@ export class ModelClassificationService {
         // Call the gRPC service with retry logic
         const attemptGetModelsByCriteria = (retryCount = 0, maxRetries = 2) => {
 
-          this.client.getModelsByCriteria(protoCriteria, (error, response) => {
+          client.getModelsByCriteria(protoCriteria, (error, response) => {
             clearTimeout(timeout); // Clear timeout once callback is received
             
             if (error) {

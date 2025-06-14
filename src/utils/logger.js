@@ -8,7 +8,7 @@ import config from "../config/config.js";
 // Define log format
 const logFormat = winston.format.printf(({ level, message, timestamp, ...meta }) => {
   return `${timestamp} [${level.toUpperCase()}]: ${message} ${
-    Object.keys(meta).length ? JSON.stringify(meta, null, 2) : ""
+    Object.keys(meta).length ? JSON.stringify(meta) : ""
   }`;
 });
 

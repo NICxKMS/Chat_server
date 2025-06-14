@@ -6,7 +6,6 @@ import dotenv from "dotenv";
 import Fastify from "fastify";
 import { promises as fsPromises } from "node:fs"; // Use promises API
 
-import zlib from "node:zlib"; // For inline compression
 import mainApiRoutes from "./routes/index.js"; // Main plugin
 import cors from '@fastify/cors';
 import compress from '@fastify/compress';
@@ -28,46 +27,9 @@ dotenv.config({ override: false }); // Load .env but don't override existing env
 // Record process start time for measuring cold start duration
 const coldStartStart = Date.now();
 
-// Create Fastify application with optional HTTP/2 support
-const useHttp2 = process.env.HTTP2_ENABLED === "true";
-const fastifyOptions = {
-  logger: true,
-  bodyLimit: chatBodyLimit // Set the global body limit here
-};
-
-if (useHttp2) {
-  fastifyOptions.http2 = true;
-  // In Cloud Run, TLS is terminated by the platform; use h2c without certs
-  if (process.env.K_SERVICE) {
-    logger.info("Fastify configured with HTTP/2 cleartext (h2c) for Cloud Run");
-  } else {
-    // Local/dev: use mkcert-generated key & cert for secure HTTP/2
-    const keyPath = "./localhost+2-key.pem"; // Changed to double quotes, relative to src/
-    const certPath = "./localhost+2.pem"; // Changed to double quotes, relative to src/
-
-    // Validate existence asynchronously and read files using promises
-    try {
-      await fsPromises.access(keyPath);
-      await fsPromises.access(certPath);
-    } catch {
-      logger.error(`HTTP/2 enabled locally but key/cert files not found at ${keyPath} or ${certPath}. Please ensure they are in the src/ directory or adjust paths.`);
-      process.exit(1);
-    }
-    const [key, cert] = await Promise.all([
-      fsPromises.readFile(keyPath),
-      fsPromises.readFile(certPath)
-    ]);
-    fastifyOptions.https = {
-      key,
-      cert
-    };
-    logger.info("Fastify configured with HTTP/2+TLS using mkcert files.");
-  }
-}
-
-const fastify = Fastify(fastifyOptions);
-const PORT = process.env.PORT || 8080;
-
+// Declare Fastify instance and port for later initialization
+let fastify;
+let PORT;
 
 // --- Initialize Firebase Admin SDK ---
 try {
@@ -98,6 +60,36 @@ try {
 // Start the server (using async/await)
 const start = async () => {
   try {
+    // Setup Fastify application with optional HTTP/2 support
+    const useHttp2 = process.env.HTTP2_ENABLED === "true";
+    const fastifyOptions = {
+      logger: true,
+      bodyLimit: chatBodyLimit
+    };
+    if (useHttp2) {
+      fastifyOptions.http2 = true;
+      if (process.env.K_SERVICE) {
+        logger.info("Fastify configured with HTTP/2 cleartext (h2c) for Cloud Run");
+      } else {
+        const keyPath = "./localhost+2-key.pem";
+        const certPath = "./localhost+2.pem";
+        try {
+          await fsPromises.access(keyPath);
+          await fsPromises.access(certPath);
+        } catch {
+          logger.error(`HTTP/2 enabled locally but key/cert files not found at ${keyPath} or ${certPath}.`);
+          process.exit(1);
+        }
+        const [key, cert] = await Promise.all([
+          fsPromises.readFile(keyPath),
+          fsPromises.readFile(certPath)
+        ]);
+        fastifyOptions.https = { key, cert };
+        logger.info("Fastify configured with HTTP/2+TLS using mkcert files.");
+      }
+    }
+    fastify = Fastify(fastifyOptions);
+    PORT = process.env.PORT || 8080;
     // Apply Firestore caching to the ModelController if enabled
     const useCache = process.env.FIRESTORE_CACHE_ENABLED !== "false";
     if (useCache) {
@@ -114,20 +106,22 @@ const start = async () => {
       "http://localhost:8000",
       "http://localhost:5500"
     ]);
-    await fastify.register(cors, {
-      origin: (origin, cb) => cb(null, !origin || allowedOriginSet.has(origin)),
-      methods: ['GET','POST','PUT','DELETE','OPTIONS'],
-      allowedHeaders: ['Content-Type','Authorization','Accept','Cache-Control','Connection','X-Requested-With','Range'],
-      maxAge: 3600
-    });
-    await fastify.register(helmet, {
-      contentSecurityPolicy: false,
-      dnsPrefetchControl: false,
-      frameguard: { action: 'sameorigin' },
-      noSniff: true,
-      referrerPolicy: { policy: 'no-referrer' }
-    });
-    await fastify.register(compress, { encodings: ['gzip'] });
+    await Promise.all([
+      fastify.register(cors, {
+        origin: (origin, cb) => cb(null, !origin || allowedOriginSet.has(origin)),
+        methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+        allowedHeaders: ['Content-Type','Authorization','Accept','Cache-Control','Connection','X-Requested-With','Range'],
+        maxAge: 3600
+      }),
+      fastify.register(helmet, {
+        contentSecurityPolicy: false,
+        dnsPrefetchControl: false,
+        frameguard: { action: 'sameorigin' },
+        noSniff: true,
+        referrerPolicy: { policy: 'no-referrer' }
+      }),
+      fastify.register(compress, { encodings: ['gzip'] })
+    ]);
 
     // Add Rate Limiter Hook
     if (config.rateLimiting?.enabled !== false) {
@@ -150,8 +144,6 @@ const start = async () => {
 
     // --- Register Error Handler ---
     fastify.setErrorHandler(fastifyErrorHandler);
-
-
 
     // --- Start Server ---
     await fastify.listen({ port: PORT, host: "0.0.0.0" });

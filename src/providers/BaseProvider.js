@@ -4,7 +4,9 @@
  */
 
 // Add imports for HTTP/2 client and SSE parsing
-import got from "got";
+import gotImport from "got";
+// Normalize got import for CJS and ESM
+const got = gotImport.default ?? gotImport;
 import { Agent as Http2Agent } from "http2-wrapper";
 import { createParser } from "eventsource-parser";
 import JSONParse from "jsonparse";

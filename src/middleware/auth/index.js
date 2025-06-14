@@ -13,6 +13,10 @@ const authStats = {
   totalRequests: 0
 };
 
+// Cache for token verification (short TTL)
+const tokenCache = new Map();
+const TOKEN_CACHE_TTL_MS = parseInt(process.env.AUTH_TOKEN_CACHE_TTL_MS || "30000", 10);
+
 /**
  * Creates middleware that extracts user from token but doesn't enforce authentication
  * This is a drop-in replacement for the current global hook
@@ -27,16 +31,23 @@ export function authenticateUser() {
     if (authHeader && authHeader.startsWith("Bearer ")) {
       const idToken = authHeader.split("Bearer ")[1];
       try {
-        // Verify token asynchronously
-        request.user = await authService.verifyToken(idToken);
-        
+        // Attempt to use cached token
+        const cached = tokenCache.get(idToken);
+        if (cached && cached.expiry > Date.now()) {
+          request.user = cached.user;
+        } else {
+          const user = await authService.verifyToken(idToken);
+          if (user) {
+            tokenCache.set(idToken, { user, expiry: Date.now() + TOKEN_CACHE_TTL_MS });
+          }
+          request.user = user;
+        }
         if (request.user) {
           logger.debug(`Authenticated user: ${request.user.uid}`);
         }
       } catch (error) {
         authStats.verificationFailures++;
         logger.warn(`Token verification failed in authenticateUser: ${error.message}`);
-        // Still continue processing the request with request.user as null
       }
     } else {
       logger.debug("No auth token provided, proceeding as anonymous.");
@@ -64,7 +75,15 @@ export function requireAuth() {
     
     const idToken = authHeader.split("Bearer ")[1];
     try {
-      request.user = await authService.verifyToken(idToken);
+      // Use cached token verification if available
+      const cached = tokenCache.get(idToken);
+      if (cached && cached.expiry > Date.now()) {
+        request.user = cached.user;
+      } else {
+        const user = await authService.verifyToken(idToken);
+        if (user) tokenCache.set(idToken, { user, expiry: Date.now() + TOKEN_CACHE_TTL_MS });
+        request.user = user;
+      }
       
       if (!request.user) {
         logger.debug("Authentication failed - token verification returned null");

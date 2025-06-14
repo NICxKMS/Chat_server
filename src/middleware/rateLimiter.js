@@ -29,7 +29,7 @@ export default async function rateLimiterHook(request, reply) {
 
   // Determine client identifier (prefer user ID if available from auth, fallback to IP)
   // Assumes authentication middleware might decorate 'request.user'
-  const userId = request.user?.id || "";
+  const userId = request.user?.uid || "";
   const clientIp = request.ip || ""; // Fastify provides request.ip
   const key = userId || clientIp;
 

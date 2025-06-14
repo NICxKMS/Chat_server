@@ -5,7 +5,7 @@
   "main": "src/server.js",
   "type": "module",
   "scripts": {
-    "start": "node dist/server.js",
+    "start": "node dist/server.cjs",
     "dev": "nodemon --watch src --ext js,json --exec node src/server.js",
     "dev:ts": "nodemon --watch ts/src --ext ts,json --exec ts-node ts/src/index.ts",
     "build": "mkdir -p dist && cp -r src/protos dist/protos && node esbuild.config.mjs",

@@ -179,8 +179,15 @@ class FirestoreCacheService {
       // Decompress the data if it exists
       let decompressedData = null;
       if (compressedData) {
-        // Handle data based on how it was stored (Base64 string)
-        const buffer = Buffer.from(compressedData, "base64");
+        // Convert Blob/Buffer to Buffer for decompression
+        let buffer;
+        if (Buffer.isBuffer(compressedData)) {
+          buffer = compressedData;
+        } else if (compressedData instanceof admin.firestore.Blob) {
+          buffer = Buffer.from(compressedData.toBase64(), "base64");
+        } else {
+          buffer = Buffer.from(compressedData, "base64");
+        }
         decompressedData = await this.decompressData(buffer);
       }
       
@@ -222,14 +229,11 @@ class FirestoreCacheService {
         now.nanoseconds
       );
 
-      // Store compressed data as base64 string instead of using Blob
-      // This avoids issues with admin.firestore.Blob potentially being undefined
-      const base64Data = compressedData.toString("base64");
-      
+      // Store compressed data as binary Blob/Buffer (avoid base64 overhead)
       await this.collection.doc(docId).set({
         userId,
         cacheKey,
-        compressedData: base64Data,
+        compressedData,  // Buffer, stored as Firestore Blob
         hash,
         timestamp: now,
         expiresAt,
