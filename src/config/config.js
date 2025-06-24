@@ -11,7 +11,7 @@ dotenv.config();
 const defaultConfig = {
   // port: parseInt(process.env.PORT || "3000", 10),
   environment: process.env.NODE_ENV || "development",
-  version: process.env.npm_package_version || "1.0.0",
+  version: process.env.npm_package_version || "1.9.7",
   logLevel: process.env.LOG_LEVEL || "debug",
   providers: {
     openai: {

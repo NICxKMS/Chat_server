@@ -22,21 +22,13 @@ const TIMEOUT_DURATION_MS = 120000; // Timeout stream after 2 minutes of inactiv
 const activeGenerations = new Map();
 
 class ChatController {
-  constructor() {
-    // Bind methods (consider if still necessary with Fastify style)
-    this.chatCompletion = this.chatCompletion.bind(this);
-    this.chatCompletionStream = this.chatCompletionStream.bind(this);
-    this.getChatCapabilities = this.getChatCapabilities.bind(this);
-    this.stopGeneration = this.stopGeneration.bind(this);
-  }
-
   /**
    * Handles standard (non-streaming) chat completion requests.
    * Performs validation, caching, provider selection, and calls the provider's `chatCompletion` method.
    * @param {FastifyRequest} request - Fastify request object.
    * @param {FastifyReply} reply - Fastify reply object.
    */
-  async chatCompletion(request, reply) {
+  chatCompletion = async (request, reply) => {
     let providerName, modelName; // Declare here for potential use in error logging
     // Create an AbortController and derive requestId (client-supplied wins)
     let abortController = new AbortController();
@@ -238,7 +230,7 @@ class ChatController {
    * @param {FastifyRequest} request - Fastify request object.
    * @param {FastifyReply} reply - Fastify reply object.
    */
-  async chatCompletionStream(request, reply) {
+  chatCompletionStream = async (request, reply) => {
     let providerName, modelName;
     let streamClosed = false; 
     let lastActivityTime = Date.now();
@@ -477,7 +469,7 @@ class ChatController {
    * @param {FastifyRequest} request - Fastify request object
    * @param {FastifyReply} reply - Fastify reply object
    */
-  async stopGeneration(request, reply) {
+  stopGeneration = async (request, reply) => {
     try {
       const { requestId } = request.body;
       
@@ -509,7 +501,7 @@ class ChatController {
    * @param {FastifyRequest} request - Fastify request object.
    * @param {FastifyReply} reply - Fastify reply object.
    */
-  async getChatCapabilities(request, reply) {
+  getChatCapabilities = async (request, reply) => {
     try {
       const circuitBreakerStates = getCircuitBreakerStates();
       

@@ -3,6 +3,7 @@
  * Sets up Fastify server with configured routes and middleware
  */
 import dotenv from "dotenv";
+import './tracing.js'; // Initialize OpenTelemetry tracing
 import Fastify from "fastify";
 import { promises as fsPromises } from "node:fs"; // Use promises API
 
@@ -21,6 +22,8 @@ import logger from "./utils/logger.js"; // Import logger
 import { bodyLimit as chatBodyLimit } from "./controllers/ChatController.js"; // Import bodyLimit
 import modelController from "./controllers/ModelController.js"; // Import raw model controller
 import { applyCaching } from "./controllers/ModelControllerCache.js"; // Import caching wrapper
+import { getMetrics } from "./utils/metrics.js"; // Import Prometheus metrics exporter
+import infoRoutes from "./routes/infoRoutes.js"; // Consolidated health/status/version plugin
 
 // Load environment variables from .env file
 dotenv.config({ override: false }); // Load .env but don't override existing env vars
@@ -31,7 +34,11 @@ const coldStartStart = Date.now();
 // Create Fastify application with optional HTTP/2 support
 const useHttp2 = process.env.HTTP2_ENABLED === "true";
 const fastifyOptions = {
-  logger: true,
+  // Structured JSON logging with Pino; redact sensitive headers
+  logger: {
+    level: config.logLevel,
+    redact: { paths: ['req.headers.authorization'], remove: true }
+  },
   bodyLimit: chatBodyLimit // Set the global body limit here
 };
 
@@ -68,6 +75,15 @@ if (useHttp2) {
 const fastify = Fastify(fastifyOptions);
 const PORT = process.env.PORT || 8080;
 
+// Correlation ID in logs and responses
+fastify.addHook('onRequest', (request, reply, done) => {
+  const correlationId = request.id;
+  // Echo header for clients
+  reply.header('X-Correlation-ID', correlationId);
+  // Include in logs
+  request.log = request.log.child({ correlationId });
+  done();
+});
 
 // --- Initialize Firebase Admin SDK ---
 try {
@@ -138,9 +154,18 @@ const start = async () => {
     fastify.addHook("onRequest", authenticateUser());
 
     // --- Register Route Plugins ---
-    // Health check endpoints (can also be moved into a plugin)
-    fastify.get("/health", (request, reply) => {
-      reply.status(200).send({ status: "OK", version: config.version });
+    // Consolidated health, status, and version endpoints at root
+    await fastify.register(infoRoutes);
+
+    // Expose Prometheus metrics for scraping
+    fastify.get("/metrics", async (request, reply) => {
+      try {
+        const metricsData = await getMetrics();
+        reply.type("text/plain").send(metricsData);
+      } catch (err) {
+        request.log.error(`Error retrieving metrics: ${err.message}`);
+        reply.status(500).send("Failed to retrieve metrics");
+      }
     });
 
     // Register main API plugin
@@ -150,8 +175,6 @@ const start = async () => {
 
     // --- Register Error Handler ---
     fastify.setErrorHandler(fastifyErrorHandler);
-
-
 
     // --- Start Server ---
     await fastify.listen({ port: PORT, host: "0.0.0.0" });
