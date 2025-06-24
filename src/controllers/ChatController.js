@@ -8,10 +8,6 @@ import * as metrics from "../utils/metrics.js";
 import { getCircuitBreakerStates } from "../utils/circuitBreaker.js";
 import logger from "../utils/logger.js";
 import { PassThrough } from "stream";
-import fastJson from 'fast-json-stringify';
-
-// Generic precompiled serializer for SSE payloads
-const serializeGeneric = fastJson({ type: 'object', additionalProperties: true });
 
 // Helper function to roughly validate base64 (more robust checks might be needed)
 
@@ -259,7 +255,7 @@ class ChatController {
     // Yield to the event loop to allow headers to flush before streaming
     await new Promise(resolve => setImmediate(resolve));
     const stream = new PassThrough({
-      highWaterMark: 16, // Bump highWaterMark to amortize system calls
+      highWaterMark: 1,  // Use smallest highWaterMark to ensure immediate chunk delivery
       autoDestroy: true  // Automatically destroy when finished
     });
 
@@ -381,7 +377,7 @@ class ChatController {
           metrics.recordStreamTtfb(providerName, modelName, ttfbSeconds);
           ttfbRecorded = true;
         }
-        const sseFormattedChunk = `data: ${serializeGeneric(chunk)}\n\n`;
+        const sseFormattedChunk = `data: ${JSON.stringify(chunk)}\n\n`;
         if (!streamClosed && !stream.writableEnded) {
           try {
             stream.write(sseFormattedChunk);
@@ -412,7 +408,7 @@ class ChatController {
         if (!streamClosed && !stream.writableEnded) {
           try {
             const abortEventData = { type: "abort", message: "Generation was stopped by the client" };
-            stream.write(`event: abort\ndata: ${serializeGeneric(abortEventData)}\n\n`);
+            stream.write(`event: abort\ndata: ${JSON.stringify(abortEventData)}\n\n`);
           } catch (e) { logger.warn(`Error sending abort event: ${e.message}`); }
         }
         safelyEndStream(`Stream aborted for ${providerName || "unknown"}/${modelName || "unknown"}`, "client_abort");
@@ -459,7 +455,7 @@ class ChatController {
           latency: streamStartTime ? Date.now() - streamStartTime : 0
         };
         try {
-          stream.write(`data: ${serializeGeneric(errorPayloadForStream)}\n\n`);
+          stream.write(`data: ${JSON.stringify(errorPayloadForStream)}\n\n`);
           stream.uncork && stream.uncork();
         } catch (e) {
           logger.warn(`Error writing error data to stream: ${e.message}`);

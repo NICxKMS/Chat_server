@@ -5,19 +5,21 @@
 import path from "path";
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
+import { fileURLToPath } from "url";
 import logger from "./logger.js";
 
-// __dirname is provided by Node in CJS bundles; we support CJS only here
+// Get current file's directory in ES module context
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Path to proto file
-const PROTO_PATH = path.resolve(__dirname, "protos/models.proto");
+const PROTO_PATH = path.resolve(__dirname, "./protos/models.proto");
 
 // Lazy-load the proto service definition
 let modelService;
-/** Asynchronously lazy-load the proto service definition */
-async function getModelService() {
+function getModelService() {
   if (!modelService) {
-    const packageDefinition = await protoLoader.load(PROTO_PATH, {
+    const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
       keepCase: true,
       longs: String,
       enums: String,
@@ -36,7 +38,7 @@ async function getModelService() {
  * @param {string} serverAddress - The address of the classification server
  * @returns {Object} gRPC client for the model classification service
  */
-export async function createModelClassificationClient(serverAddress = "localhost:8080") {
+export function createModelClassificationClient(serverAddress = "localhost:8080") {
   // Enhanced options for better compatibility with Go server
   const options = {
     "grpc.max_receive_message_length": 1024 * 1024 * 1, // 1MB
@@ -45,7 +47,7 @@ export async function createModelClassificationClient(serverAddress = "localhost
     "grpc.default_compression_level": 0, // No compression
   };
 
-  const svc = await getModelService();
+  const svc = getModelService();
   return new svc.ModelClassificationService(
     serverAddress,
     grpc.credentials.createInsecure(),

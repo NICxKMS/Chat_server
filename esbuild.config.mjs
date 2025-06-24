@@ -12,19 +12,12 @@ build({
   bundle: true,
   platform: "node",
   target: ["node20"],
-  format: "cjs",
-  sourcemap: false,
-  metafile: true,
-  treeShaking: true,
-  define: { 'process.env.NODE_ENV': '"production"' },
-  pure: [
-    "console.log",
-    "console.debug",
-    "console.info",
-    "console.trace",
-    "logger.debug",
-    "logger.info"
-  ],
+  format: "esm",
+  banner: {
+    js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);"
+  },
+  minify: true,
+  pure: ["console.log", "logger.info", "logger.debug"],
   external: [...Object.keys(pkg.dependencies), ...builtinModules],
-  outfile: "dist/server.cjs",
+  outfile: "dist/server.js",
 }).catch(() => process.exit(1)); 

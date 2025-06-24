@@ -2,8 +2,7 @@
   "env": {
     "production": {
       "plugins": [
-        ["transform-remove-console", { "exclude": ["error", "warn"] }],
-        "transform-remove-debugger"
+        ["transform-remove-console", { "exclude": ["error", "warn"] }]
       ]
     }
   }
