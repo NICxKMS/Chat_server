@@ -40,9 +40,9 @@ function mapErrorToResponse(error, request) {
 
   let details = error.validation
     ? error.validation.map((v) => ({
-        field: v.instancePath.substring(1) || "request",
-        message: v.message,
-      }))
+      field: v.instancePath.substring(1) || "request",
+      message: v.message,
+    }))
     : undefined;
 
   const payload = {

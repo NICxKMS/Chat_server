@@ -138,7 +138,9 @@ class GeminiProvider extends BaseProvider {
       const result = await this.genAI.models.generateContent({
         model: opts.model,
         contents: contents,
-        systemInstruction: systemInstruction,
+        config: {
+          systemInstruction: systemInstruction,
+        },
         generationConfig: {
           temperature: opts.temperature,
           maxOutputTokens: opts.max_tokens,
@@ -171,7 +173,6 @@ class GeminiProvider extends BaseProvider {
         },
         latency,
         finishReason: choice?.finishReason || "unknown",
-        raw: response,
       };
     } catch (error) {
       logger.error(`Gemini chat error: ${error.message}`, {
@@ -271,7 +272,10 @@ class GeminiProvider extends BaseProvider {
     const stream = await this.genAI.models.generateContentStream({
       model: modelName,
       contents: contents,
-      generationConfig: {
+      config: {
+        systemInstruction: systemInstruction,
+      // },
+      // generationConfig: {
         temperature: opts.temperature,
         maxOutputTokens: opts.max_tokens,
         stopSequences: opts.stop,
@@ -279,7 +283,6 @@ class GeminiProvider extends BaseProvider {
       thinkingConfig: {
         thinkingBudget: -1,
       },
-      systemInstruction: systemInstruction,
       signal: opts.abortSignal,
     });
 
@@ -328,7 +331,6 @@ class GeminiProvider extends BaseProvider {
         totalTokens: totalTokenCount,
       },
       latency: latency || 0,
-      raw: chunk,
     };
   }
 }

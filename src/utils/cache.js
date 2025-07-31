@@ -61,7 +61,7 @@ function generateKey(keyOrData) {
 function get(key) {
   const cacheItem = cacheStore.get(key);
   if (!cacheItem || cacheItem.expiry < Date.now()) {
-    if (cacheItem) cacheStore.delete(key);
+    if (cacheItem) {cacheStore.delete(key);}
     stats.misses++;
     return null;
   }

@@ -466,10 +466,10 @@ class OpenAIProvider extends BaseProvider {
     // Use a default object for usage to avoid null checks.
     const usage = chunk.usage
       ? {
-          promptTokens: chunk.usage.prompt_tokens || 0,
-          completionTokens: chunk.usage.completion_tokens || 0,
-          totalTokens: chunk.usage.total_tokens || 0,
-        }
+        promptTokens: chunk.usage.prompt_tokens || 0,
+        completionTokens: chunk.usage.completion_tokens || 0,
+        totalTokens: chunk.usage.total_tokens || 0,
+      }
       : null;
 
     return {
