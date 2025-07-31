@@ -91,10 +91,10 @@ export function createProtoModel(model) {
     return {
       id: String(model.id || ""),
       name: String(model.name || ""),
-      context_size: Number(model.tokenLimit || 0),
+      context_size: Number(model.contextSize || 0),
       max_tokens: Number(model.tokenLimit || 0),
       provider: String(model.provider || ""),
-      display_name: String(model.displayName || ""),
+      display_name: String(model.name || model.displayName || ""),
       description: String(model.description || ""),
       cost_per_token: Number(model.costPerToken || 0),
       capabilities: Array.isArray(model.capabilities) ? model.capabilities.map(String) : [],

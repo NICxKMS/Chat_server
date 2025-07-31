@@ -374,6 +374,8 @@ class ChatController {
           try {
             stream.write(sseFormattedChunk);
             stream.uncork && stream.uncork();
+            // Flush to client immediately
+            reply.raw.flush && reply.raw.flush();
           } catch (writeError) {
             logger.error(`Error writing chunk to stream: ${writeError.message}`);
             safelyEndStream(`Error writing chunk to stream: ${writeError.message}`, "write_error");
