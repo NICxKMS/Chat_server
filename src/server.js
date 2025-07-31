@@ -52,8 +52,19 @@ async function buildServer() {
 
   // Register essential plugins
   await fastify.register(cors, {
-    origin: true, // Reflects the request origin, as defined by `Access-Control-Allow-Origin`
+    origin: true, // Dynamically reflects the request origin.
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Accept",
+      "Cache-Control",
+      "Connection",
+      "X-Requested-With",
+      "Range",
+    ],
+    maxAge: 3600, // Cache preflight requests for 1 hour.
   });
 
   await fastify.register(helmet, {
