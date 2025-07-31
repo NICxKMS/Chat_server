@@ -254,39 +254,41 @@ class OpenAIProvider extends BaseProvider {
    * @returns {Array<object>} Messages formatted for the OpenAI API.
    */
   _processMessagesForOpenAI(messages) {
-    return messages.map(message => {
-      // If content is an array (multimodal)
-      if (Array.isArray(message.content)) {
-        const contentParts = message.content.map(item => {
-          if (item.type === "text") {
-            return { type: "text", text: item.text };
-          } else if (item.type === "image_url" && item.image_url?.url) {
-            // OpenAI accepts image URLs directly (including base64 data URLs)
-            return { type: "image_url", image_url: { url: item.image_url.url } };
-          } else {
-            // Skip unknown content parts or log a warning
-            logger.warn(`Unsupported content type in OpenAI message: ${item.type}`);
-            return null;
-          }
-        }).filter(part => part !== null); // Remove null parts
+    const processedMessages = [];
+    for (const message of messages) {
+      if (!message.content) {
+        logger.warn(
+          "Message with empty content skipped for OpenAI:",
+          message
+        );
+        continue;
+      }
 
-        return {
+      if (Array.isArray(message.content)) {
+        const contentParts = [];
+        for (const item of message.content) {
+          if (item.type === "text") {
+            contentParts.push({ type: "text", text: item.text });
+          } else if (item.type === "image_url" && item.image_url?.url) {
+            contentParts.push({
+              type: "image_url",
+              image_url: { url: item.image_url.url },
+            });
+          } else {
+            logger.warn(
+              `Unsupported content type in OpenAI message: ${item.type}`
+            );
+          }
+        }
+        processedMessages.push({ role: message.role, content: contentParts });
+      } else if (typeof message.content === "string") {
+        processedMessages.push({
           role: message.role,
-          content: contentParts
-        };
+          content: message.content,
+        });
       }
-      // If content is just a string (text only)
-      else if (typeof message.content === "string") {
-        return {
-          role: message.role,
-          content: message.content
-        };
-      } else {
-        // Handle cases where content might be missing or has unexpected format
-        logger.warn("Message with unexpected content format skipped for OpenAI:", message);
-        return null; // Or return a default structure if appropriate
-      }
-    }).filter(message => message !== null); // Filter out skipped messages
+    }
+    return processedMessages;
   }
 
   /**
@@ -449,35 +451,40 @@ class OpenAIProvider extends BaseProvider {
   }
 
   _normalizeStreamChunk(chunk, modelName) {
-    // If chunk is not an object (e.g. [DONE] string that wasn't caught above, or other non-JSON) return null or handle as error.
     if (typeof chunk !== "object" || chunk === null) {
-      logger.warn("[OpenAIProvider._normalizeStreamChunk] Received non-object chunk, skipping normalization.", { chunk });
-      return null; // Or throw new Error("Invalid chunk type");
+      logger.warn(
+        "[OpenAIProvider._normalizeStreamChunk] Received non-object chunk, skipping.",
+        { chunk }
+      );
+      return null;
     }
 
     const choice = chunk.choices?.[0];
     const delta = choice?.delta;
     const finishReason = choice?.finish_reason;
-    
-    // OpenAI with `stream_options: { include_usage: true }` sends usage in the *last* event
-    // This event might have null delta content but will contain the usage object.
-    const usage = chunk.usage ? {
-      promptTokens: chunk.usage.prompt_tokens || 0,
-      completionTokens: chunk.usage.completion_tokens || 0,
-      totalTokens: chunk.usage.total_tokens || 0
-    } : null; // Default to null if not present in this specific chunk
+
+    // Use a default object for usage to avoid null checks.
+    const usage = chunk.usage
+      ? {
+          promptTokens: chunk.usage.prompt_tokens || 0,
+          completionTokens: chunk.usage.completion_tokens || 0,
+          totalTokens: chunk.usage.total_tokens || 0,
+        }
+      : null;
 
     return {
       id: chunk.id,
       model: chunk.model || modelName,
       provider: this.name,
-      createdAt: chunk.created ? new Date(chunk.created * 1000).toISOString() : new Date().toISOString(),
+      createdAt: chunk.created
+        ? new Date(chunk.created * 1000).toISOString()
+        : new Date().toISOString(),
       content: delta?.content || null,
       toolCalls: delta?.tool_calls || null,
-      usage: usage, // Will be null for most chunks, populated for the last one if stream_options used
-      latency: 0, // TTFB is handled by BaseProvider, subsequent chunk latency is not individually tracked here
-      finishReason: finishReason || null, // Will be null for most chunks, populated for the last one
-      raw: chunk
+      usage: usage,
+      latency: 0,
+      finishReason: finishReason || null,
+      raw: chunk,
     };
   }
 }

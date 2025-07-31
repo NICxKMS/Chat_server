@@ -1,11 +1,11 @@
 /**
- * Fastify Error Handler
- * Centralized error handling for the application.
- * Provides standardized JSON error responses.
+ * @file Fastify Error Handler
+ * @description Centralized, high-performance error handling for the application.
+ * @version 2.0.0
  */
-import logger from "../utils/logger.js"; // Use a structured logger
 
-// Map common error names/types to HTTP status codes
+import logger from "../utils/logger.js";
+
 const ERROR_STATUS_MAP = {
   ValidationError: 400,
   BadRequestError: 400,
@@ -14,90 +14,79 @@ const ERROR_STATUS_MAP = {
   ForbiddenError: 403,
   NotFoundError: 404,
   ConflictError: 409,
-  RateLimitError: 429, // Usually handled before this by rate limiter hook sending response
+  RateLimitError: 429,
   InternalServerError: 500,
   ServiceUnavailableError: 503,
   TimeoutError: 504,
-  ProviderError: 502, // Bad Gateway often suitable for upstream provider issues
-  ProviderClientError: 400, // Default client error from provider
-  // Add Fastify's default validation error code for mapping
+  ProviderError: 502,
+  ProviderClientError: 400,
   FST_ERR_VALIDATION: 400,
 };
 
 /**
- * Centralized Error Handler for Fastify.
- * Catches errors thrown in routes/hooks or passed via reply.send(error).
- * @param {Error & { statusCode?: number; validation?: any; code?: string; status?: number; details?: any }} error - The error object.
- * @param {FastifyRequest} request
- * @param {FastifyReply} reply
+ * Maps an error to a standardized response payload.
+ * @param {Error} error - The error object.
+ * @param {import('fastify').FastifyRequest} request - The Fastify request object.
+ * @returns {{statusCode: number, payload: object}}
  */
-export default function fastifyErrorHandler(error, request, reply) {
-  // Determine HTTP status code
-  // Prioritize Fastify validation errors, then explicit status codes, then mapped names/codes
-  let statusCode = error.validation ? 400 :                  // Fastify validation error
-    reply.statusCode >= 400 ? reply.statusCode : // Status code already set on reply
-      error.statusCode || error.status ||           // Explicit status code on error object
-                   ERROR_STATUS_MAP[error.code] ||            // Map error codes (e.g., FST_ERR_VALIDATION)
-                   ERROR_STATUS_MAP[error.name] ||            // Map custom error names
-                   500;                                       // Default to 500
+function mapErrorToResponse(error, request) {
+  const statusCode =
+    (error.validation && 400) ||
+    error.statusCode ||
+    error.status ||
+    ERROR_STATUS_MAP[error.name] ||
+    ERROR_STATUS_MAP[error.code] ||
+    500;
 
-  // Special handling for Fastify validation errors to extract details
-  let validationDetails = null;
-  let errorName = error.name || "Error";
-  let errorCode = error.code || error.name || "InternalServerError";
+  let details = error.validation
+    ? error.validation.map((v) => ({
+        field: v.instancePath.substring(1) || "request",
+        message: v.message,
+      }))
+    : undefined;
 
-  if (error.validation) {
-    statusCode = 400; // Ensure 400 for validation
-    errorName = "ValidationError";
-    errorCode = "FST_ERR_VALIDATION"; // Use Fastify's code
-    validationDetails = error.validation.map(v => ({
-      field: v.instancePath.substring(1) || "request", // Clean up path, default to 'request'
-      message: v.message
-    }));
-  } else {
-    // Use mapped code if found, otherwise keep original/name
-    errorCode = ERROR_STATUS_MAP[error.code] ? error.code : 
-      ERROR_STATUS_MAP[error.name] ? error.name : 
-        errorCode; // Fallback
-  }
-
-  // Log the error details
-  const logContext = {
-    error_name: errorName,
-    error_message: error.message,
-    error_code: errorCode,
-    status_code: statusCode,
-    path: request.raw.url, // Or request.url
-    method: request.method,
-    ip: request.ip,
-    ...(validationDetails && { validation_details: validationDetails }) // Include validation details if present
-  };
-  if (statusCode >= 500 || process.env.NODE_ENV !== "production") {
-    logContext.stack = error.stack;
-  }
-  logger.error("API Error Handled", logContext);
-
-  // Check if response has already been sent using reply.sent
-  if (reply.sent || (reply.raw && reply.raw.headersSent)) {
-    logger.warn("Reply already sent, cannot send error response.", { path: request.raw.url });
-    return; // Don't attempt to send again
-  }
-
-  // Construct standardized JSON error response
-  const errorResponse = {
+  const payload = {
     error: {
-      code: errorCode,
+      code: error.code || error.name || "InternalServerError",
       message: error.message || "An unexpected error occurred.",
       status: statusCode,
-      // Include validation details directly if present
-      ...(validationDetails && { details: validationDetails }), 
-      // Optionally include other details in development (but not for validation errors)
-      ...(process.env.NODE_ENV === "development" && !validationDetails && error.details && { details: error.details }),
+      details,
       timestamp: new Date().toISOString(),
-      path: request.raw.url, // Or request.url
-    }
+      path: request.raw.url,
+    },
   };
 
-  // Send the response using reply.status().send()
-  reply.status(statusCode).send(errorResponse);
-} 
+  return { statusCode, payload };
+}
+
+/**
+ * Centralized Error Handler for Fastify.
+ * @param {Error} error - The error object.
+ * @param {import('fastify').FastifyRequest} request - The Fastify request object.
+ * @param {import('fastify').FastifyReply} reply - The Fastify reply object.
+ */
+export default function fastifyErrorHandler(error, request, reply) {
+  const { statusCode, payload } = mapErrorToResponse(error, request);
+
+  // Avoid logging validation errors as full errors unless in development.
+  if (statusCode === 400 && error.validation) {
+    logger.info("Validation Error", {
+      error: payload.error,
+      ip: request.ip,
+    });
+  } else {
+    logger.error("API Error Handled", {
+      error: payload.error,
+      stack: statusCode >= 500 ? error.stack : undefined,
+    });
+  }
+
+  if (reply.sent) {
+    logger.warn("Reply already sent, cannot send error response.", {
+      path: request.raw.url,
+    });
+    return;
+  }
+
+  reply.status(statusCode).send(payload);
+}

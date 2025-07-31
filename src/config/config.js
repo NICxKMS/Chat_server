@@ -13,6 +13,7 @@ const defaultConfig = {
   environment: process.env.NODE_ENV || "development",
   version: process.env.npm_package_version || "1.9.7",
   logLevel: process.env.LOG_LEVEL || "debug",
+  port: parseInt(process.env.PORT || "3000", 10),
   providers: {
     openai: {
       apiKey: process.env.OPENAI_API_KEY,
@@ -25,10 +26,10 @@ const defaultConfig = {
         "gpt-4-turbo",
         "gpt-4",
         "gpt-3.5-turbo",
-        "gpt-3.5-turbo-16k"
+        "gpt-3.5-turbo-16k",
       ],
       defaultModel: "gpt-3.5-turbo",
-      dynamicModelLoading: true
+      dynamicModelLoading: true,
     },
     anthropic: {
       apiKey: process.env.ANTHROPIC_API_KEY,
@@ -36,7 +37,7 @@ const defaultConfig = {
       timeout: parseInt(process.env.ANTHROPIC_TIMEOUT || "30000", 10),
       models: ["claude-3-opus", "claude-3-sonnet", "claude-3-haiku"],
       defaultModel: "claude-3-haiku",
-      dynamicModelLoading: true
+      dynamicModelLoading: true,
     },
     gemini: {
       apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
@@ -44,36 +45,46 @@ const defaultConfig = {
       models: ["gemini-1.5-flash", "gemini-1.5-pro"],
       defaultModel: "gemini-1.5-flash",
       dynamicModelLoading: true,
-      grpcKeepaliveTimeMs: parseInt(process.env.GEMINI_GRPC_KEEPALIVE_TIME_MS || "30000", 10),
-      grpcKeepaliveTimeoutMs: parseInt(process.env.GEMINI_GRPC_KEEPALIVE_TIMEOUT_MS || "10000", 10),
-      apiVersion: process.env.GEMINI_API_VERSION || "v1beta"
+      grpcKeepaliveTimeMs: parseInt(
+        process.env.GEMINI_GRPC_KEEPALIVE_TIME_MS || "30000",
+        10
+      ),
+      grpcKeepaliveTimeoutMs: parseInt(
+        process.env.GEMINI_GRPC_KEEPALIVE_TIMEOUT_MS || "10000",
+        10
+      ),
+      apiVersion: process.env.GEMINI_API_VERSION || "v1beta",
     },
     openrouter: {
       apiKey: process.env.OPENROUTER_API_KEY,
-      baseUrl: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
+      baseUrl:
+        process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
       timeout: parseInt(process.env.OPENROUTER_TIMEOUT || "60000", 10),
       models: [],
       defaultModel: "",
-      dynamicModelLoading: true
-    }
+      dynamicModelLoading: true,
+    },
   },
   rateLimiting: {
     enabled: process.env.RATE_LIMITING_ENABLED !== "false",
     options: {
       points: parseInt(process.env.RATE_LIMITING_MAX || "10000000", 10),
       duration: parseInt(process.env.RATE_LIMITING_WINDOW_MS || "3600", 10), // in seconds
-      blockDuration: parseInt(process.env.RATE_LIMITING_BLOCK_DURATION || "900", 10) // in seconds
-    }
+      blockDuration: parseInt(
+        process.env.RATE_LIMITING_BLOCK_DURATION || "900",
+        10
+      ), // in seconds
+    },
   },
   cache: {
     enabled: process.env.CACHE_ENABLED === "false",
     ttl: parseInt(process.env.CACHE_TTL || "300", 10),
-    maxSize: parseInt(process.env.CACHE_MAX_SIZE || "100", 10)
+    maxSize: parseInt(process.env.CACHE_MAX_SIZE || "100", 10),
   },
   cors: {
     origins: (process.env.CORS_ORIGINS || "*").split(","),
-    headers: ["Content-Type", "Authorization", "X-Requested-With"]
-  }
+    headers: ["Content-Type", "Authorization", "X-Requested-With"],
+  },
 };
 
-export default defaultConfig; 
+export default defaultConfig;

@@ -135,14 +135,18 @@ class BaseProvider {
    * @returns {object} Standardized options suitable for provider methods.
    */
   standardizeOptions(options) {
-    const { model, messages, temperature = 0.7, max_tokens = 1000, ...rest } = options;
-    
+    // This is a hot path, so we avoid destructuring for performance.
+    const model = options.model || this.config.defaultModel || "";
+    const messages = options.messages || [];
+    const temperature = options.temperature !== undefined ? parseFloat(options.temperature) : 0.7;
+    const max_tokens = options.max_tokens !== undefined ? parseInt(options.max_tokens, 10) : 1000;
+
     return {
-      model: model || this.config.defaultModel || "",
-      messages: messages || [],
-      temperature: parseFloat(temperature.toString()),
-      max_tokens: parseInt(max_tokens.toString(), 10),
-      ...rest
+      model,
+      messages,
+      temperature,
+      max_tokens,
+      ...options,
     };
   }
 
@@ -152,21 +156,13 @@ class BaseProvider {
    * @throws {Error} If essential options (model, messages) are missing or invalid.
    */
   validateOptions(options) {
-    const { model, messages } = options;
-    
-    if (!model) {
+    if (!options.model) {
       throw new Error("Model parameter is required");
     }
-    
-    if (!Array.isArray(messages) || messages.length === 0) {
+    if (!Array.isArray(options.messages) || options.messages.length === 0) {
       throw new Error("Messages array is required and must not be empty");
     }
-    
-    messages.forEach((message, index) => {
-      if (!message.role || !message.content) {
-        throw new Error(`Message at index ${index} must have role and content properties`);
-      }
-    });
+    // No need to iterate over messages for validation; schema should handle this.
   }
 
   /**

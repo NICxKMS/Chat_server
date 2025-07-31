@@ -176,30 +176,28 @@ export class AnthropicProvider extends BaseProvider {
    * @returns {object} { anthropicMessages: Array<object>, systemPrompt: string | undefined }
    */
   createMessages(messages) {
-    let systemPrompt = undefined;
+    let systemPrompt;
     const anthropicMessages = [];
 
     for (const message of messages) {
-      if (message.role === "system") {
-        // Capture the first system message content
-        if (systemPrompt === undefined) {
-          if (typeof message.content === "string") {
-            systemPrompt = message.content;
-          } else if (Array.isArray(message.content) && message.content[0]?.type === "text") {
-            // Handle array format for system prompt if needed (usually just text)
-            systemPrompt = message.content[0].text;
-          }
+      if (message.role === "system" && systemPrompt === undefined) {
+        if (typeof message.content === "string") {
+          systemPrompt = message.content;
+        } else if (
+          Array.isArray(message.content) &&
+          message.content[0]?.type === "text"
+        ) {
+          systemPrompt = message.content[0].text;
         }
-        continue; // Skip adding system message to the main message list
+        continue;
       }
 
       if (message.role === "user" || message.role === "assistant") {
         const contentParts = [];
-
         if (typeof message.content === "string") {
           contentParts.push({ type: "text", text: message.content });
         } else if (Array.isArray(message.content)) {
-          message.content.forEach(item => {
+          for (const item of message.content) {
             if (item.type === "text") {
               contentParts.push({ type: "text", text: item.text });
             } else if (item.type === "image_url" && item.image_url?.url) {
@@ -210,47 +208,26 @@ export class AnthropicProvider extends BaseProvider {
                   source: {
                     type: "base64",
                     media_type: parsed.mediaType,
-                    data: parsed.data
-                  }
+                    data: parsed.data,
+                  },
                 });
               } else {
-                // Handle non-base64 URLs if necessary (Anthropic might support URLs directly in some cases)
-                // For now, log a warning and potentially add a text placeholder
-                logger.warn(`Skipping non-base64 image URL for Anthropic: ${item.image_url.url}`);
-                // contentParts.push({ type: "text", text: `[Image URL: ${item.image_url.url}]` });
+                logger.warn(
+                  `Skipping non-base64 image URL for Anthropic: ${item.image_url.url}`
+                );
               }
             }
-          });
+          }
         }
 
-        // Only add the message if it has content parts
         if (contentParts.length > 0) {
           anthropicMessages.push({
             role: message.role,
-            content: contentParts
+            content: contentParts,
           });
         }
       }
     }
-
-    // Anthropic API requires messages to alternate between user and assistant.
-    // Add an empty user message if the sequence starts with assistant.
-    if (anthropicMessages.length > 0 && anthropicMessages[0].role === "assistant") {
-      anthropicMessages.unshift({ role: "user", content: [{ type: "text", text: "" }] }); // Or a more meaningful placeholder
-      logger.warn("Anthropic message sequence started with assistant. Prepending empty user message.");
-    }
-    // Ensure the last message is not from the assistant (API requirement)
-    if (anthropicMessages.length > 0 && anthropicMessages[anthropicMessages.length - 1].role === "assistant") {
-      // Anthropic API often errors if the last message is from the assistant.
-      // Option 1: Append an empty user message (might not be ideal for all scenarios)
-      // anthropicMessages.push({ role: 'user', content: [{ type: 'text', text: '' }] });
-      // logger.warn("Last message to Anthropic was from assistant. API might error.");
-      // Option 2: Log a warning and let it potentially fail (more informative)
-      logger.warn("Last message to Anthropic is from the assistant. The API might reject this sequence.");
-      // Option 3: Depending on use case, could trim the last assistant message, but that loses context.
-    }
-
-
     return { anthropicMessages, systemPrompt };
   }
 
@@ -294,19 +271,16 @@ export class AnthropicProvider extends BaseProvider {
    * @returns {object} A standardized response object.
    */
   parseResponse(data, model, latency) {
-    // Extract the content text
     let contentText = "";
-    
     if (data.content && Array.isArray(data.content)) {
-      // Extract text content from content array
-      contentText = data.content
-        .filter(item => item.type === "text")
-        .map(item => item.text || "")
-        .join("");
+      for (const item of data.content) {
+        if (item.type === "text" && item.text) {
+          contentText += item.text;
+        }
+      }
     }
-    
-    // Create standardized response format
-    const response = {
+
+    return {
       id: data.id || `anthropic-${Date.now()}`,
       model: model,
       provider: this.name,
@@ -315,14 +289,13 @@ export class AnthropicProvider extends BaseProvider {
       usage: {
         promptTokens: data.usage?.input_tokens || 0,
         completionTokens: data.usage?.output_tokens || 0,
-        totalTokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)
+        totalTokens:
+          (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
       },
       latency: latency,
       finishReason: data.stop_reason || "unknown",
-      raw: data
+      raw: data,
     };
-    
-    return response;
   }
 
   /**
@@ -469,35 +442,39 @@ export class AnthropicProvider extends BaseProvider {
    * @param {string|null} messageId - The ID of the current message being streamed.
    * @returns {object | null} Standardized chunk or null if it's not a content chunk.
    */
-  _normalizeStreamChunk(eventType, data, model, latency, finishReason, usage, messageId) {
+  _normalizeStreamChunk(
+    eventType,
+    data,
+    model,
+    latency,
+    finishReason,
+    usage,
+    messageId
+  ) {
     let contentDelta = null;
 
-    if (eventType === "content_block_delta" && data.delta?.type === "text_delta") {
-      contentDelta = data.delta.text;
-    } else if (eventType === "message_delta" && data.delta?.type === "text_delta") {
-      // Older Anthropic versions might use message_delta for text
+    if (
+      eventType === "content_block_delta" &&
+      data.delta?.type === "text_delta"
+    ) {
       contentDelta = data.delta.text;
     }
 
-    // Only yield chunks that contain actual text content delta
-    if (contentDelta !== null && contentDelta !== "") {
+    if (contentDelta) {
       return {
-        id: messageId ? `${messageId}-chunk-${Date.now()}` : `anthropic-chunk-${Date.now()}`,
+        id: messageId
+          ? `${messageId}-chunk-${Date.now()}`
+          : `anthropic-chunk-${Date.now()}`,
         model: model,
         provider: this.name,
         createdAt: new Date().toISOString(),
         content: contentDelta,
-        usage: usage, // Include cumulative usage
-        latency: latency, // Only relevant for the first chunk (TTFB)
-        finishReason: finishReason, // Include current finish reason state
-        raw: { type: eventType, delta: data.delta } // Include minimal raw delta info
+        usage: usage,
+        latency: latency,
+        finishReason: finishReason,
+        raw: { type: eventType, delta: data.delta },
       };
-    } else if (eventType === "message_stop") {
-      // We handle the final meta-information yield outside this function
-      return null;
     }
-    
-    // Ignore other event types like message_start, content_block_start, ping etc. for standard chunk output
     return null;
   }
 }

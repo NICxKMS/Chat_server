@@ -1,235 +1,160 @@
 /**
- * Main server entry point
- * Sets up Fastify server with configured routes and middleware
+ * @file Main server entry point
+ * @description Sets up the Fastify server with optimized plugins, routes, and middleware.
+ * @version 2.2.0
  */
-import dotenv from "dotenv";
-import './tracing.js'; // Initialize OpenTelemetry tracing
+
+import "./tracing.js"; // Initialize OpenTelemetry first
 import Fastify from "fastify";
-import { promises as fsPromises } from "node:fs"; // Use promises API
+import admin from "firebase-admin";
 
-import zlib from "node:zlib"; // For inline compression
-import mainApiRoutes from "./routes/index.js"; // Main plugin
-import cors from '@fastify/cors';
-import compress from '@fastify/compress';
-import helmet from '@fastify/helmet';
+// Fastify plugins
+import cors from "@fastify/cors";
+import helmet from "@fastify/helmet";
+import compress from "@fastify/compress";
 
-import fastifyErrorHandler from "./middleware/errorHandler.js"; // Added error handler import
-import rateLimiterHook from "./middleware/rateLimiter.js"; // Hook import
-import { authenticateUser } from "./middleware/auth/index.js"; // New auth middleware
+// Local module imports
 import config from "./config/config.js";
-import admin from "firebase-admin"; // Added Firebase Admin
-import logger from "./utils/logger.js"; // Import logger
-import { bodyLimit as chatBodyLimit } from "./controllers/ChatController.js"; // Import bodyLimit
-import modelController from "./controllers/ModelController.js"; // Import raw model controller
-import { applyCaching } from "./controllers/ModelControllerCache.js"; // Import caching wrapper
-import { getMetrics } from "./utils/metrics.js"; // Import Prometheus metrics exporter
-import infoRoutes from "./routes/infoRoutes.js"; // Consolidated health/status/version plugin
+import fastifyErrorHandler from "./middleware/errorHandler.js";
+import rateLimiterHook from "./middleware/rateLimiter.js";
+import { authenticateUser } from "./middleware/auth/index.js";
+import mainApiRoutes from "./routes/index.js";
+import infoRoutes from "./routes/infoRoutes.js";
+import { getMetrics } from "./utils/metrics.js";
+import modelController from "./controllers/ModelController.js";
+import { applyCaching } from "./controllers/ModelControllerCache.js";
+import logger from "./utils/logger.js";
 
-// Load environment variables from .env file
-dotenv.config({ override: false }); // Load .env but don't override existing env vars
-
-// Record process start time for measuring cold start duration
 const coldStartStart = Date.now();
 
-// Create Fastify application with optional HTTP/2 support
-const useHttp2 = process.env.HTTP2_ENABLED === "true";
-const fastifyOptions = {
-  // Structured JSON logging with Pino; redact sensitive headers
-  logger: {
-    level: config.logLevel,
-    redact: { paths: ['req.headers.authorization'], remove: true }
-  },
-  bodyLimit: chatBodyLimit // Set the global body limit here
-};
+/**
+ * Initializes and configures the Fastify server instance.
+ * @returns {import('fastify').FastifyInstance} The configured Fastify instance.
+ */
+async function buildServer() {
+  const fastify = Fastify({
+    logger: {
+      level: config.logLevel,
+      redact: { paths: ["req.headers.authorization"], remove: true },
+    },
+    bodyLimit: 10 * 1024 * 1024, // 10MB
+  });
 
-if (useHttp2) {
-  fastifyOptions.http2 = true;
-  // In Cloud Run, TLS is terminated by the platform; use h2c without certs
-  if (process.env.K_SERVICE) {
-    logger.info("Fastify configured with HTTP/2 cleartext (h2c) for Cloud Run");
-  } else {
-    // Local/dev: use mkcert-generated key & cert for secure HTTP/2
-    const keyPath = "./localhost+2-key.pem"; // Changed to double quotes, relative to src/
-    const certPath = "./localhost+2.pem"; // Changed to double quotes, relative to src/
+  const allowedOrigins = new Set([
+    "http://localhost:3001",
+    "https://chat-api-9ru.pages.dev",
+    "https://nicxkms.github.io/chat-api",
+    "https://nicxkms.github.io",
+    "https://chat-8fh.pages.dev",
+    "http://localhost:8000",
+    "http://localhost:5500",
+  ]);
 
-    // Validate existence asynchronously and read files using promises
-    try {
-      await fsPromises.access(keyPath);
-      await fsPromises.access(certPath);
-    } catch {
-      logger.error(`HTTP/2 enabled locally but key/cert files not found at ${keyPath} or ${certPath}. Please ensure they are in the src/ directory or adjust paths.`);
-      process.exit(1);
-    }
-    const [key, cert] = await Promise.all([
-      fsPromises.readFile(keyPath),
-      fsPromises.readFile(certPath)
-    ]);
-    fastifyOptions.https = {
-      key,
-      cert
-    };
-    logger.info("Fastify configured with HTTP/2+TLS using mkcert files.");
-  }
-}
-
-const fastify = Fastify(fastifyOptions);
-const PORT = process.env.PORT || 8080;
-
-// Correlation ID in logs and responses
-fastify.addHook('onRequest', (request, reply, done) => {
-  const correlationId = request.id;
-  // Echo header for clients
-  reply.header('X-Correlation-ID', correlationId);
-  // Include in logs
-  request.log = request.log.child({ correlationId });
-  done();
-});
-
-// --- Initialize Firebase Admin SDK ---
-try {
-  // Check if either credential method is available
-  if (process.env.FIREBASE_CONFIG) {
-    // Use the FIREBASE_CONFIG environment variable directly
-    const firebaseConfig = JSON.parse(process.env.FIREBASE_CONFIG);
-    admin.initializeApp({
-      credential: admin.credential.cert(firebaseConfig)
-    });
-  } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    // Fall back to application default credentials if FIREBASE_CONFIG not available
-    admin.initializeApp({
-      credential: admin.credential.applicationDefault(),
-    });
-    logger.info("Firebase Admin SDK initialized successfully with application default credentials.");
-  } else {
-    throw new Error("No Firebase credentials found. Set FIREBASE_CONFIG or GOOGLE_APPLICATION_CREDENTIALS environment variable.");
-  }
-} catch (error) {
-  logger.error("Firebase Admin SDK initialization error:", error);
-  process.exit(1); // Exit if Firebase Admin fails to initialize
-}
-
-// Eagerly initialize Firestore cache service
-// firestoreCacheService.initialize();
-
-// Start the server (using async/await)
-const start = async () => {
-  try {
-    // Apply Firestore caching to the ModelController if enabled
-    const useCache = process.env.FIRESTORE_CACHE_ENABLED !== "false";
-    if (useCache) {
-      applyCaching(modelController);
-    }
-
-    // Register optimized plugins for CORS, security headers, and compression
-    const allowedOriginSet = new Set([
-      "http://localhost:3001",
-      "https://chat-api-9ru.pages.dev",
-      "https://nicxkms.github.io/chat-api",
-      "https://nicxkms.github.io",
-      "https://chat-8fh.pages.dev",
-      "http://localhost:8000",
-      "http://localhost:5500"
-    ]);
-    await fastify.register(cors, {
-      origin: (origin, cb) => cb(null, !origin || allowedOriginSet.has(origin)),
-      methods: ['GET','POST','PUT','DELETE','OPTIONS'],
-      allowedHeaders: ['Content-Type','Authorization','Accept','Cache-Control','Connection','X-Requested-With','Range'],
-      maxAge: 3600
-    });
-    await fastify.register(helmet, {
-      contentSecurityPolicy: false,
-      dnsPrefetchControl: false,
-      frameguard: { action: 'sameorigin' },
-      noSniff: true,
-      referrerPolicy: { policy: 'no-referrer' }
-    });
-    await fastify.register(compress, { encodings: ['gzip'] });
-
-    // Add Rate Limiter Hook
-    if (config.rateLimiting?.enabled !== false) {
-      fastify.addHook("onRequest", rateLimiterHook);
-    }
-
-    // Register Firebase Auth Hook globally - USE NEW MIDDLEWARE
-    fastify.addHook("onRequest", authenticateUser());
-
-    // --- Register Route Plugins ---
-    // Consolidated health, status, and version endpoints at root
-    await fastify.register(infoRoutes);
-
-    // Expose Prometheus metrics for scraping
-    fastify.get("/metrics", async (request, reply) => {
-      try {
-        const metricsData = await getMetrics();
-        reply.type("text/plain").send(metricsData);
-      } catch (err) {
-        request.log.error(`Error retrieving metrics: ${err.message}`);
-        reply.status(500).send("Failed to retrieve metrics");
+  // Register essential plugins
+  await fastify.register(cors, {
+    origin: (origin, cb) => {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      // and requests from whitelisted origins.
+      if (!origin || allowedOrigins.has(origin)) {
+        cb(null, true);
+      } else {
+        cb(new Error("Not allowed by CORS"), false);
       }
-    });
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Accept", "Cache-Control", "Connection", "X-Requested-With", "Range"],
+    maxAge: 3600,
+  });
 
-    // Register main API plugin
-    await fastify.register(mainApiRoutes, {
-      prefix: "/api"
-    });
+  await fastify.register(helmet, {
+    contentSecurityPolicy: false, // Specific policies can be configured here if needed.
+    dnsPrefetchControl: false,
+    frameguard: { action: "sameorigin" },
+    noSniff: true,
+    referrerPolicy: { policy: "no-referrer" },
+  });
 
-    // --- Register Error Handler ---
-    fastify.setErrorHandler(fastifyErrorHandler);
+  await fastify.register(compress, { encodings: ["gzip"] });
 
-    // --- Start Server ---
-    await fastify.listen({ port: PORT, host: "0.0.0.0" });
-    // Log total cold start time after server is listening
+  // Register application-level hooks
+  if (config.rateLimiting?.enabled) {
+    fastify.addHook("onRequest", rateLimiterHook);
+  }
+  fastify.addHook("onRequest", authenticateUser());
+  fastify.setErrorHandler(fastifyErrorHandler);
+
+  // Register route handlers
+  await fastify.register(infoRoutes);
+  await fastify.register(mainApiRoutes, { prefix: "/api" });
+  fastify.get("/metrics", async (request, reply) => {
+    reply.type("text/plain").send(await getMetrics());
+  });
+
+  return fastify;
+}
+
+/**
+ * Initializes the Firebase Admin SDK using available credentials.
+ */
+function initializeFirebase() {
+  try {
+    const firebaseConfigEnv = process.env.FIREBASE_CONFIG;
+    let credential;
+
+    if (firebaseConfigEnv) {
+      const firebaseConfig = JSON.parse(firebaseConfigEnv);
+      credential = admin.credential.cert(firebaseConfig);
+      logger.info("Initializing Firebase Admin SDK with FIREBASE_CONFIG.");
+    } else {
+      credential = admin.credential.applicationDefault();
+      logger.info("Initializing Firebase Admin SDK with application default credentials.");
+    }
+
+    admin.initializeApp({ credential });
+  } catch (error) {
+    logger.error("Firebase Admin SDK initialization failed:", error);
+    process.exit(1);
+  }
+}
+
+/**
+ * Handles graceful shutdown of the server and connected services.
+ * @param {string} signal - The signal that triggered the shutdown.
+ * @param {import('fastify').FastifyInstance} server - The Fastify server instance.
+ */
+async function gracefulShutdown(signal, server) {
+  logger.info(`${signal} received, shutting down gracefully...`);
+  await server.close();
+  await admin.app().delete();
+  logger.info("Server and Firebase app shut down successfully.");
+  process.exit(0);
+}
+
+/**
+ * The main entry point for the application.
+ * Initializes services, builds the server, and starts listening for requests.
+ */
+async function main() {
+  initializeFirebase();
+
+  if (process.env.FIRESTORE_CACHE_ENABLED !== "false") {
+    applyCaching(modelController);
+  }
+
+  const server = await buildServer();
+
+  // Set up signal handlers for graceful shutdown
+  process.on("SIGINT", () => gracefulShutdown("SIGINT", server));
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM", server));
+
+  try {
+    await server.listen({ port: config.port || 8080, host: "0.0.0.0" });
     const coldStartTime = Date.now() - coldStartStart;
     logger.info(`Cold start completed in ${coldStartTime}ms`);
   } catch (err) {
-    fastify.log.error(err);
+    server.log.error(err);
     process.exit(1);
-  }
-};
-
-// Graceful shutdown logic encapsulated in a single function
-let isShuttingDown = false;
-async function gracefulShutdown(signal) {
-  if (isShuttingDown) return; // Prevent multiple executions
-  isShuttingDown = true;
-
-  try {
-    fastify.log.info(`${signal} received, shutting down gracefully`);
-
-    // Close Fastify (stops accepting new connections and waits for existing ones)
-    await fastify.close();
-
-    // Clean up Firebase Admin SDK connections, if initialised
-    try {
-      await admin.app().delete();
-      fastify.log.info("Firebase app deleted.");
-    } catch (err) {
-      // If app was not initialised or already deleted, ignore
-      fastify.log.debug("Firebase app delete skipped: ", err.message);
-    }
-
-    fastify.log.info("Server closed.");
-  } catch (err) {
-    fastify.log.error("Error during shutdown: ", err);
-  } finally {
-    process.exit(0);
   }
 }
 
-// Listen for termination signals **once** so that duplicate signals (e.g. SIGINT twice) don't cause issues
-["SIGINT", "SIGTERM"].forEach(signal => {
-  process.once(signal, () => gracefulShutdown(signal));
-});
-
-// Catch unhandled promise rejections & uncaught exceptions to log errors but keep server running
-process.on("unhandledRejection", (reason, promise) => {
-  fastify.log.error("Unhandled Rejection at:", promise, "reason:", reason);
-  // Application continues running
-});
-
-process.on("uncaughtException", err => {
-  fastify.log.error("Uncaught Exception thrown:", err);
-  // Application continues running
-});
-
-start();
+main();

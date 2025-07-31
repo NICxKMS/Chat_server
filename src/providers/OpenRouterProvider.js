@@ -200,38 +200,41 @@ class OpenRouterProvider extends BaseProvider {
    * @returns {Array<object>} Messages formatted for the OpenRouter API.
    */
   _processMessagesForOpenRouter(messages) {
-    return messages.map(message => {
-      // If content is an array (multimodal)
-      if (Array.isArray(message.content)) {
-        const contentParts = message.content.map(item => {
-          if (item.type === "text") {
-            return { type: "text", text: item.text };
-          } else if (item.type === "image_url" && item.image_url?.url) {
-            // OpenRouter accepts image URLs directly (including base64 data URLs)
-            // following the OpenAI format.
-            return { type: "image_url", image_url: { url: item.image_url.url } };
-          } else {
-            logger.warn(`Unsupported content type in OpenRouter message: ${item.type}`);
-            return null;
-          }
-        }).filter(part => part !== null);
+    const processedMessages = [];
+    for (const message of messages) {
+      if (!message.content) {
+        logger.warn(
+          "Message with empty content skipped for OpenRouter:",
+          message
+        );
+        continue;
+      }
 
-        return {
+      if (Array.isArray(message.content)) {
+        const contentParts = [];
+        for (const item of message.content) {
+          if (item.type === "text") {
+            contentParts.push({ type: "text", text: item.text });
+          } else if (item.type === "image_url" && item.image_url?.url) {
+            contentParts.push({
+              type: "image_url",
+              image_url: { url: item.image_url.url },
+            });
+          } else {
+            logger.warn(
+              `Unsupported content type in OpenRouter message: ${item.type}`
+            );
+          }
+        }
+        processedMessages.push({ role: message.role, content: contentParts });
+      } else if (typeof message.content === "string") {
+        processedMessages.push({
           role: message.role,
-          content: contentParts
-        };
+          content: message.content,
+        });
       }
-      // If content is just a string (text only)
-      else if (typeof message.content === "string") {
-        return {
-          role: message.role,
-          content: message.content
-        };
-      } else {
-        logger.warn("Message with unexpected content format skipped for OpenRouter:", message);
-        return null;
-      }
-    }).filter(message => message !== null);
+    }
+    return processedMessages;
   }
 
   /**
@@ -404,33 +407,38 @@ class OpenRouterProvider extends BaseProvider {
    */
   _normalizeStreamChunk(chunk, modelName) {
     if (typeof chunk !== "object" || chunk === null) {
-      logger.warn("[OpenRouterProvider._normalizeStreamChunk] Received non-object chunk, skipping normalization.", { chunk });
+      logger.warn(
+        "[OpenRouterProvider._normalizeStreamChunk] Received non-object chunk, skipping.",
+        { chunk }
+      );
       return null;
     }
 
-    // OpenRouter generally follows OpenAI's streaming format
     const choice = chunk.choices?.[0];
     const delta = choice?.delta;
     const finishReason = choice?.finish_reason;
-    
-    // OpenRouter can also send a final chunk with usage details (especially for OpenAI-compatible models)
-    const usage = chunk.usage ? {
-      promptTokens: chunk.usage.prompt_tokens || 0,
-      completionTokens: chunk.usage.completion_tokens || 0,
-      totalTokens: chunk.usage.total_tokens || 0
-    } : null;
+
+    const usage = chunk.usage
+      ? {
+          promptTokens: chunk.usage.prompt_tokens || 0,
+          completionTokens: chunk.usage.completion_tokens || 0,
+          totalTokens: chunk.usage.total_tokens || 0,
+        }
+      : null;
 
     return {
       id: chunk.id,
-      model: chunk.model || modelName, // Use model from chunk if available, else fallback to request's modelName
+      model: chunk.model || modelName,
       provider: this.name,
-      createdAt: chunk.created ? new Date(chunk.created * 1000).toISOString() : new Date().toISOString(),
+      createdAt: chunk.created
+        ? new Date(chunk.created * 1000).toISOString()
+        : new Date().toISOString(),
       content: delta?.content || null,
       toolCalls: delta?.tool_calls || null,
       usage: usage,
-      latency: 0, // TTFB handled in BaseProvider
+      latency: 0,
       finishReason: finishReason || null,
-      raw: chunk
+      raw: chunk,
     };
   }
 }
