@@ -52,18 +52,8 @@ async function buildServer() {
 
   // Register essential plugins
   await fastify.register(cors, {
-    origin: (origin, cb) => {
-      // Allow requests with no origin (like mobile apps or curl requests)
-      // and requests from whitelisted origins.
-      if (!origin || allowedOrigins.has(origin)) {
-        cb(null, true);
-      } else {
-        cb(new Error("Not allowed by CORS"), false);
-      }
-    },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Accept", "Cache-Control", "Connection", "X-Requested-With", "Range"],
-    maxAge: 3600,
+    origin: true, // Reflects the request origin, as defined by `Access-Control-Allow-Origin`
+    credentials: true,
   });
 
   await fastify.register(helmet, {
