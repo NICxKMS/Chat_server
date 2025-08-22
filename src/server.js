@@ -3,13 +3,15 @@
  * Sets up Fastify server with configured routes and middleware
  */
 import dotenv from "dotenv";
-import "./tracing.js"; // Initialize OpenTelemetry tracing
+import './tracing.js'; // Initialize OpenTelemetry tracing
 import Fastify from "fastify";
 import { promises as fsPromises } from "node:fs"; // Use promises API
+
+import zlib from "node:zlib"; // For inline compression
 import mainApiRoutes from "./routes/index.js"; // Main plugin
-import cors from "@fastify/cors";
-import compress from "@fastify/compress";
-import helmet from "@fastify/helmet";
+import cors from '@fastify/cors';
+import compress from '@fastify/compress';
+import helmet from '@fastify/helmet';
 
 import fastifyErrorHandler from "./middleware/errorHandler.js"; // Added error handler import
 import rateLimiterHook from "./middleware/rateLimiter.js"; // Hook import
@@ -35,7 +37,7 @@ const fastifyOptions = {
   // Structured JSON logging with Pino; redact sensitive headers
   logger: {
     level: config.logLevel,
-    redact: { paths: ["req.headers.authorization"], remove: true }
+    redact: { paths: ['req.headers.authorization'], remove: true }
   },
   bodyLimit: chatBodyLimit // Set the global body limit here
 };
@@ -74,10 +76,10 @@ const fastify = Fastify(fastifyOptions);
 const PORT = process.env.PORT || 8080;
 
 // Correlation ID in logs and responses
-fastify.addHook("onRequest", (request, reply, done) => {
+fastify.addHook('onRequest', (request, reply, done) => {
   const correlationId = request.id;
   // Echo header for clients
-  reply.header("X-Correlation-ID", correlationId);
+  reply.header('X-Correlation-ID', correlationId);
   // Include in logs
   request.log = request.log.child({ correlationId });
   done();
@@ -131,18 +133,18 @@ const start = async () => {
     ]);
     await fastify.register(cors, {
       origin: (origin, cb) => cb(null, !origin || allowedOriginSet.has(origin)),
-      methods: ["GET","POST","PUT","DELETE","OPTIONS"],
-      allowedHeaders: ["Content-Type","Authorization","Accept","Cache-Control","Connection","X-Requested-With","Range"],
+      methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+      allowedHeaders: ['Content-Type','Authorization','Accept','Cache-Control','Connection','X-Requested-With','Range'],
       maxAge: 3600
     });
     await fastify.register(helmet, {
       contentSecurityPolicy: false,
       dnsPrefetchControl: false,
-      frameguard: { action: "sameorigin" },
+      frameguard: { action: 'sameorigin' },
       noSniff: true,
-      referrerPolicy: { policy: "no-referrer" }
+      referrerPolicy: { policy: 'no-referrer' }
     });
-    await fastify.register(compress, { encodings: ["gzip"] });
+    await fastify.register(compress, { encodings: ['gzip'] });
 
     // Add Rate Limiter Hook
     if (config.rateLimiting?.enabled !== false) {
@@ -189,7 +191,7 @@ const start = async () => {
 // Graceful shutdown logic encapsulated in a single function
 let isShuttingDown = false;
 async function gracefulShutdown(signal) {
-  if (isShuttingDown) {return;} // Prevent multiple executions
+  if (isShuttingDown) return; // Prevent multiple executions
   isShuttingDown = true;
 
   try {

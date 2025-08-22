@@ -1,7 +1,7 @@
 import fp from "fastify-plugin";
 import * as metrics from "../utils/metrics.js";
 
-export default fp(async function metricsPlugin(fastify) {
+export default fp(async function metricsPlugin(fastify, opts) {
   fastify.addHook("onRequest", (request, reply, done) => {
     try {
       metrics.incrementRequestCount();

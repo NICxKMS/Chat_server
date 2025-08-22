@@ -3,7 +3,7 @@ import admin from "firebase-admin";
 import logger from "../utils/logger.js";
 import { authenticateUser } from "../middleware/auth/index.js";
 
-export default fp(async function fastifyFirebase(fastify) {
+export default fp(async function fastifyFirebase(fastify, opts) {
   // Initialize Firebase Admin SDK
   try {
     if (!admin.apps.length) {

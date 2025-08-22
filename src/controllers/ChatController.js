@@ -6,6 +6,7 @@
 
 import providerFactory from "../providers/ProviderFactory.js";
 import * as cache from "../utils/cache.js";
+import * as metrics from "../utils/metrics.js";
 import { getCircuitBreakerStates } from "../utils/circuitBreaker.js";
 import logger from "../utils/logger.js";
 import { PassThrough } from "stream";
@@ -30,12 +31,15 @@ class ChatController {
    * @private
    */
   _getProviderAndModel(model) {
-    const parts = model.split("/");
-    if (parts.length > 1) {
-      return parts;
+    const separatorIndex = model.indexOf("/");
+    if (separatorIndex !== -1) {
+      const providerName = model.substring(0, separatorIndex);
+      const modelName = model.substring(separatorIndex + 1);
+      return [providerName, modelName];
+    } else {
+      const defaultProvider = providerFactory.getProvider();
+      return [defaultProvider.name, model];
     }
-    const defaultProvider = providerFactory.getProvider();
-    return [defaultProvider.name, model];
   }
 
   /**
@@ -56,10 +60,9 @@ class ChatController {
       reply.header("X-Request-ID", requestId);
 
       // Optimized cache check
-      let cacheKey;
       if (cache.isEnabled() && !nocache) {
         const cacheKeyData = { provider: providerName, model: modelName, messages, ...restOptions };
-        cacheKey = cache.generateKey(cacheKeyData);
+        const cacheKey = cache.generateKey(cacheKeyData);
         const cachedResponse = await cache.get(cacheKey);
         if (cachedResponse) {
           logger.info(`Cache hit for ${providerName}/${modelName}`);
@@ -77,7 +80,9 @@ class ChatController {
       const response = await provider.chatCompletion(options);
 
       // Set cache if enabled
-      if (cache.isEnabled() && !nocache && cacheKey) {
+      if (cache.isEnabled() && !nocache) {
+        const cacheKeyData = { provider: providerName, model: modelName, messages, ...restOptions };
+        const cacheKey = cache.generateKey(cacheKeyData);
         await cache.set(cacheKey, response);
       }
 
@@ -131,28 +136,19 @@ class ChatController {
     reply.send(stream);
 
     let lastActivityTime = Date.now();
-    let heartbeatInterval = setInterval(() => stream.write(":heartbeat\n\n"), HEARTBEAT_INTERVAL_MS);
-    let timeoutId = setTimeout(handleTimeout, TIMEOUT_DURATION_MS);
-
-    function handleTimeout() {
-      const timeSinceLastActivity = Date.now() - lastActivityTime;
-      if (timeSinceLastActivity >= TIMEOUT_DURATION_MS) {
+    const heartbeatInterval = setInterval(() => stream.write(":heartbeat\n\n"), HEARTBEAT_INTERVAL_MS);
+    const timeoutCheckInterval = setInterval(() => {
+      if (Date.now() - lastActivityTime > TIMEOUT_DURATION_MS) {
         abortController.abort();
-      } else {
-        timeoutId = setTimeout(handleTimeout, TIMEOUT_DURATION_MS - timeSinceLastActivity);
       }
-    }
+    }, TIMEOUT_DURATION_MS / 2);
 
     const cleanup = () => {
       clearInterval(heartbeatInterval);
-      clearTimeout(timeoutId);
+      clearInterval(timeoutCheckInterval);
       activeGenerations.delete(requestId);
-      if (!stream.writableEnded) {
-        stream.end();
-      }
-      if (!stream.destroyed) {
-        stream.destroy();
-      }
+      if (!stream.writableEnded) stream.end();
+      if (!stream.destroyed) stream.destroy();
     };
 
     try {

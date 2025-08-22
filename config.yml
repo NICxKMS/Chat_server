@@ -35,7 +35,7 @@ CONCURRENT_REQUEST_LIMIT: '20'
 
 # Gemini Configuration
 GEMINI_DYNAMIC_MODELS: 'true'
-GEMINI_API_VERSION: v1
+GEMINI_API_VERSION: v1beta
 
 # Firebase Configuration
 GOOGLE_APPLICATION_CREDENTIALS: /secrets/firebase/authkey.json

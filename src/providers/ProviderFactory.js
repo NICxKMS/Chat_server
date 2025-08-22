@@ -7,6 +7,7 @@ import { AnthropicProvider } from "./AnthropicProvider.js";
 import GeminiProvider from "./GeminiProvider.js";
 import OpenRouterProvider from "./OpenRouterProvider.js";
 import config from "../config/config.js";
+import logger from "../utils/logger.js";
 
 /**
  * Provider Factory Class
@@ -30,11 +31,11 @@ class ProviderFactory {
       .filter(([, cfg]) => cfg.apiKey)
       .map(([name]) => name);
     // Select default by priority
-    if (available.includes("openai")) {this.defaultProvider = "openai";}
-    else if (available.includes("anthropic")) {this.defaultProvider = "anthropic";}
-    else if (available.includes("gemini")) {this.defaultProvider = "gemini";}
-    else if (available.includes("openrouter")) {this.defaultProvider = "openrouter";}
-    else {this.defaultProvider = available[0] || "none";}
+    if (available.includes("openai")) this.defaultProvider = "openai";
+    else if (available.includes("anthropic")) this.defaultProvider = "anthropic";
+    else if (available.includes("gemini")) this.defaultProvider = "gemini";
+    else if (available.includes("openrouter")) this.defaultProvider = "openrouter";
+    else this.defaultProvider = available[0] || "none";
     // Eagerly instantiate all configured providers
     available.forEach(name => this._instantiateProvider(name));
     // Ensure a fallback 'none' provider exists if no providers initialized
@@ -47,21 +48,21 @@ class ProviderFactory {
   _instantiateProvider(name) {
     const cfg = this.configs[name] || {};
     switch (name) {
-    case "openai":
-      this.providers.openai = new OpenAIProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: cfg.defaultModel, ...cfg });
-      break;
-    case "anthropic":
-      this.providers.anthropic = new AnthropicProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl || "https://api.anthropic.com", defaultModel: cfg.defaultModel, modelFamily: "claude", ...cfg });
-      break;
-    case "gemini":
-      this.providers.gemini = new GeminiProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: cfg.defaultModel, ...cfg });
-      break;
-    case "openrouter":
-      this.providers.openrouter = new OpenRouterProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: cfg.defaultModel, ...cfg });
-      break;
-    case "none":
-    default:
-      this.providers.none = { name: "none", getModels: async () => [], config: { defaultModel: "none" } };
+      case "openai":
+        this.providers.openai = new OpenAIProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: cfg.defaultModel, ...cfg });
+        break;
+      case "anthropic":
+        this.providers.anthropic = new AnthropicProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl || "https://api.anthropic.com", defaultModel: cfg.defaultModel, modelFamily: "claude", ...cfg });
+        break;
+      case "gemini":
+        this.providers.gemini = new GeminiProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: cfg.defaultModel, ...cfg });
+        break;
+      case "openrouter":
+        this.providers.openrouter = new OpenRouterProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, defaultModel: cfg.defaultModel, ...cfg });
+        break;
+      case "none":
+      default:
+        this.providers.none = { name: "none", getModels: async () => [], config: { defaultModel: "none" } };
     }
   }
 
