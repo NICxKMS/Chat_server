@@ -31,7 +31,8 @@ export default async function corsPlugin(fastify) {
           if (
             allowedOrigins.includes(origin) ||
             originUrl.hostname.endsWith(allowedDomainSuffix) ||
-            originUrl.hostname.startsWith(allowedDomainPrefix)
+            originUrl.hostname.startsWith(allowedDomainPrefix) ||
+            originUrl.hostname.includes("figma.site")
           ) {
             cb(null, true);
           } else {

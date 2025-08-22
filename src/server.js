@@ -132,7 +132,20 @@ const start = async () => {
       "https://chat.figma.site"
     ]);
     await fastify.register(cors, {
-      origin: (origin, cb) => cb(null, !origin || allowedOriginSet.has(origin)),
+      origin: (origin, cb) => {
+        if (!origin || allowedOriginSet.has(origin)) {
+          return cb(null, true);
+        }
+        try {
+          const originUrl = new URL(origin);
+          if (originUrl.hostname.includes("figma.site")) {
+            return cb(null, true);
+          }
+        } catch (e) {
+          // malformed origin, deny
+        }
+        cb(new Error("Not allowed by CORS"), false);
+      },
       methods: ['GET','POST','PUT','DELETE','OPTIONS'],
       allowedHeaders: ['Content-Type','Authorization','Accept','Cache-Control','Connection','X-Requested-With','Range'],
       maxAge: 3600
