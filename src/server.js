@@ -126,7 +126,8 @@ const start = async () => {
       "https://nicxkms.github.io",
       "https://chat-8fh.pages.dev",
       "http://localhost:8000",
-      "http://localhost:5500"
+      "http://localhost:5500",
+      "https://chat.figma.site/"
     ]);
     await fastify.register(cors, {
       origin: (origin, cb) => cb(null, !origin || allowedOriginSet.has(origin)),
